@@ -68,39 +68,38 @@ pub fn expand(proxy: ItemStruct, input: ItemTrait) -> Result<TokenStream> {
     let mut extra_impls = TokenStream::new();
 
     for t in &input.supertraits {
-        if let TypeParamBound::Trait(t) = t {
-            if t.path.leading_colon.is_none() && t.path.segments.len() == 1 {
-                let PathSegment { ident, arguments } = &t.path.segments[0];
-                if ident == "Send" {
-                    extra_impls.extend(quote! {
-                        unsafe impl Send for #proxy_name {}
-                    });
-                } else if ident == "Sync" {
-                    extra_impls.extend(quote! {
-                        unsafe impl Sync for #proxy_name {}
-                    });
-                } else if ident == "AsRef" {
-                    if let PathArguments::AngleBracketed(args) = arguments {
-                        if let Some(GenericArgument::Type(ty)) = args.args.first() {
-                            let export_name =
-                                format!("{symbol_prefix}_AsRef_{}", ty.to_token_stream());
-                            let sig = parse_quote!(fn as_ref(&self) -> &#ty);
-                            let impl_content = generate_proxy_impl(proxy_name, &export_name, &sig)?;
-                            extra_impls.extend(quote! {
-                                impl AsRef<#ty> for #proxy_name {
-                                    #impl_content
-                                }
-                            });
-                            macro_content.extend(generate_macro_rules(
-                                Some(quote!(AsRef<#ty>)),
-                                &export_name,
-                                &sig,
-                            ));
-                        }
+        if let TypeParamBound::Trait(t) = t
+            && t.path.leading_colon.is_none()
+            && t.path.segments.len() == 1
+        {
+            let PathSegment { ident, arguments } = &t.path.segments[0];
+            if ident == "Send" {
+                extra_impls.extend(quote! {
+                    unsafe impl Send for #proxy_name {}
+                });
+            } else if ident == "Sync" {
+                extra_impls.extend(quote! {
+                    unsafe impl Sync for #proxy_name {}
+                });
+            } else if ident == "AsRef"
+                && let PathArguments::AngleBracketed(args) = arguments
+                && let Some(GenericArgument::Type(ty)) = args.args.first()
+            {
+                let export_name = format!("{symbol_prefix}_AsRef_{}", ty.to_token_stream());
+                let sig = parse_quote!(fn as_ref(&self) -> &#ty);
+                let impl_content = generate_proxy_impl(proxy_name, &export_name, &sig)?;
+                extra_impls.extend(quote! {
+                    impl AsRef<#ty> for #proxy_name {
+                        #impl_content
                     }
-                }
-                // TODO: support more traits
+                });
+                macro_content.extend(generate_macro_rules(
+                    Some(quote!(AsRef<#ty>)),
+                    &export_name,
+                    &sig,
+                ));
             }
+            // TODO: support more traits
         }
     }
 

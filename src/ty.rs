@@ -61,20 +61,20 @@ impl TypeExt for Type {
                         return true;
                     }
                 }
-                if let ReturnType::Type(_, ret) = &f.output {
-                    if ret.contains_self() {
-                        return true;
-                    }
+                if let ReturnType::Type(_, ret) = &f.output
+                    && ret.contains_self()
+                {
+                    return true;
                 }
                 false
             }
             Type::Group(group) => group.elem.contains_self(),
             Type::Paren(paren) => paren.elem.contains_self(),
             Type::Path(path) => {
-                if let Some(qself) = &path.qself {
-                    if qself.ty.contains_self() {
-                        return true;
-                    }
+                if let Some(qself) = &path.qself
+                    && qself.ty.contains_self()
+                {
+                    return true;
                 }
                 for segment in &path.path.segments {
                     if segment.ident == "Self" {
@@ -84,10 +84,10 @@ impl TypeExt for Type {
                         PathArguments::None => {}
                         PathArguments::AngleBracketed(args) => {
                             for arg in &args.args {
-                                if let GenericArgument::Type(ty) = arg {
-                                    if ty.contains_self() {
-                                        return true;
-                                    }
+                                if let GenericArgument::Type(ty) = arg
+                                    && ty.contains_self()
+                                {
+                                    return true;
                                 }
                             }
                         }
@@ -97,10 +97,10 @@ impl TypeExt for Type {
                                     return true;
                                 }
                             }
-                            if let ReturnType::Type(_, ret) = &args.output {
-                                if ret.contains_self() {
-                                    return true;
-                                }
+                            if let ReturnType::Type(_, ret) = &args.output
+                                && ret.contains_self()
+                            {
+                                return true;
                             }
                         }
                     }
