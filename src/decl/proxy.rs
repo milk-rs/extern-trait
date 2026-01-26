@@ -27,7 +27,7 @@ impl ToTokens for Proxy {
 
         tokens.append_all(quote! {
             #(#attrs)*
-            #vis struct #ident((*const (), *const ()));
+            #vis struct #ident(*const (), *const ());
         });
     }
 }

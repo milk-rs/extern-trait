@@ -260,7 +260,6 @@ fn generate_macro_rules(
     let trait_name = trait_.unwrap_or_else(|| quote!($trait));
 
     quote! {
-        #[doc(hidden)]
         #[unsafe(export_name = #export_name)]
         unsafe extern "Rust" fn #ident(#(#arg_names: #arg_types),*) #output {
             #unsafety {

@@ -18,7 +18,7 @@ use extern_trait::extern_trait;
     /// A proxy type for [`Hello`].
     pub(crate) HelloProxy
 )]
-pub unsafe trait Hello {
+pub unsafe trait Hello: 'static {
     fn new(num: i32) -> Self;
     fn hello(&self);
 }
@@ -29,16 +29,16 @@ v.hello();
 // In crate B
 struct HelloImpl(i32);
 
-#[extern_trait]
-unsafe impl Hello for HelloImpl {
-    fn new(num: i32) -> Self {
-        Self(num)
-    }
+    #[extern_trait]
+    unsafe impl Hello for HelloImpl {
+        fn new(num: i32) -> Self {
+            Self(num)
+        }
 
-    fn hello(&self) {
-        println!("Hello, {}", self.0)
+        fn hello(&self) {
+            println!("Hello, {}", self.0)
+        }
     }
-}
 ```
 
 This will generate the following code (adapted):
@@ -49,11 +49,10 @@ This will generate the following code (adapted):
 
 ```rust
 // In crate A
-// #[extern_trait(HelloProxy)]
 /// A Hello trait.
 /// # Safety
 /// See [`extern_trait`].
-pub unsafe trait Hello {
+pub unsafe trait Hello: 'static {
     fn new(num: i32) -> Self;
     fn hello(&self);
 }
@@ -64,28 +63,29 @@ pub(crate) struct HelloProxy(*const (), *const ());
 unsafe impl Hello for HelloProxy {
     fn new(_0: i32) -> Self {
         unsafe extern "Rust" {
-            #[link_name = "__extern_trait_A_0.1.0_A_Hello_new"]
-            safe fn new(_: i32) -> HelloProxy;
+            #[link_name = "Symbol { ..., trait_name: \"Hello\", ..., name: \"new\" }"]
+            unsafe fn new(_: i32) -> HelloProxy;
+
         }
-        new(_0)
+        unsafe { new(_0) }
     }
 
     fn hello(&self) {
         unsafe extern "Rust" {
-            #[link_name = "__extern_trait_A_0.1.0_A_Hello_hello"]
-            safe fn hello(_: &HelloProxy);
+            #[link_name = "Symbol { ..., trait_name: \"Hello\", ..., name: \"hello\" }"]
+            unsafe fn hello(_: &HelloProxy);
         }
-        hello(self)
+        unsafe { hello(self) }
     }
 }
 
 impl Drop for HelloProxy {
     fn drop(&mut self) {
         unsafe extern "Rust" {
-            #[link_name = "__extern_trait_A_0.1.0_A_Hello_drop"]
-            safe fn drop(this: *mut HelloProxy);
+            #[link_name = "Symbol { ..., trait_name: \"Hello\", ..., name: \"drop\" }"]
+            unsafe fn drop(this: *mut HelloProxy);
         }
-        drop(self)
+        unsafe { drop(self) }
     }
 }
 
@@ -111,18 +111,15 @@ const _: () = {
 };
 
 const _: () = {
-    #[doc(hidden)]
-    #[unsafe(export_name = "__extern_trait_A_0.1.0_A_Hello_new")]
+    #[unsafe(export_name = "Symbol { ..., trait_name: \"Hello\", ..., name: \"new\" }")]
     unsafe extern "Rust" fn new(_0: i32) -> HelloImpl {
-        <HelloImpl as Hello>::new(_0)
+        { <HelloImpl as Hello>::new(_0) }
     }
-    #[doc(hidden)]
-    #[unsafe(export_name = "__extern_trait_A_0.1.0_A_Hello_hello")]
+    #[unsafe(export_name = "Symbol { ..., trait_name: \"Hello\", ..., name: \"hello\" }")]
     unsafe extern "Rust" fn hello(_0: &HelloImpl) {
-        <HelloImpl as Hello>::hello(_0)
+        { <HelloImpl as Hello>::hello(_0) }
     }
-    #[doc(hidden)]
-    #[unsafe(export_name = "__extern_trait_A_0.1.0_A_Hello_drop")]
+    #[unsafe(export_name = "Symbol { ..., trait_name: \"Hello\", ..., name: \"drop\" }")]
     unsafe extern "Rust" fn drop(this: &mut HelloImpl) {
         unsafe { ::core::ptr::drop_in_place(this) };
     }
@@ -142,7 +139,7 @@ An `#[extern_trait]` may have supertraits to forward more trait implementations.
 use extern_trait::extern_trait;
 
 #[extern_trait(FooImpl)]
-unsafe trait Foo: Send {
+unsafe trait Foo: 'static + Send {
     fn foo();
 }
 ```
