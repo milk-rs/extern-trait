@@ -1,12 +1,13 @@
 mod proxy;
 mod sig;
+mod supertraits;
 mod sym;
 
 use proc_macro2::{Span, TokenStream};
-use quote::{ToTokens, format_ident, quote};
+use quote::{format_ident, quote};
 use syn::{
-    Error, GenericArgument, Ident, ItemTrait, PathArguments, PathSegment, Result,
-    TraitBoundModifier, TraitItem, Type, TypeParamBound, parse_quote,
+    Error, Ident, ItemTrait, Result, TraitBoundModifier, TraitItem, Type, TypeParamBound,
+    parse_quote,
 };
 
 use self::{proxy::Proxy, sig::VerifiedSignature, sym::Symbol};
@@ -78,35 +79,12 @@ pub fn expand(proxy: Proxy, input: ItemTrait) -> Result<TokenStream> {
             && t.path.segments.len() == 1
         {
             let t = &t.path.segments[0];
-            let PathSegment { ident, arguments } = &t;
-            if ident == "Send" {
-                super_impls.extend(quote! {
-                    unsafe impl Send for #proxy_ident {}
-                });
-            } else if ident == "Sync" {
-                super_impls.extend(quote! {
-                    unsafe impl Sync for #proxy_ident {}
-                });
-            } else if ident == "AsRef"
-                && let PathArguments::AngleBracketed(args) = arguments
-                && let Some(GenericArgument::Type(ty)) = args.args.first()
+            if let Some((impl_block, macro_rules)) =
+                supertraits::generate_impl(t, proxy_ident, &sym)
             {
-                let export_name = format!(
-                    "{:?}",
-                    sym.clone()
-                        .with_name(format!("{}::as_ref", t.to_token_stream()))
-                );
-                let sig =
-                    VerifiedSignature::try_new(&parse_quote!(fn as_ref(&self) -> &#ty)).unwrap();
-                let impl_content = generate_proxy_impl(proxy_ident, &export_name, &sig);
-                super_impls.extend(quote! {
-                    impl #t for #proxy_ident {
-                        #impl_content
-                    }
-                });
-                macro_content.extend(generate_macro_rules(Some(quote!(#t)), &export_name, &sig));
+                super_impls.extend(impl_block);
+                macro_content.extend(macro_rules);
             }
-            // TODO: support more super traits
         }
     }
 
@@ -195,9 +173,9 @@ pub fn expand(proxy: Proxy, input: ItemTrait) -> Result<TokenStream> {
         #[macro_export]
         macro_rules! #macro_ident {
             ($trait:path: $ty:ty) => {
-                const _: () = {
-                    #macro_content
+                #macro_content
 
+                const _: () = {
                     #[unsafe(export_name = #drop_name)]
                     unsafe extern "Rust" fn drop(this: &mut $ty) {
                         unsafe { ::core::ptr::drop_in_place(this) };
@@ -260,11 +238,13 @@ fn generate_macro_rules(
     let trait_name = trait_.unwrap_or_else(|| quote!($trait));
 
     quote! {
-        #[unsafe(export_name = #export_name)]
-        unsafe extern "Rust" fn #ident(#(#arg_names: #arg_types),*) #output {
-            #unsafety {
-                <$ty as #trait_name>::#ident(#(#arg_names),*)
+        const _: () = {
+            #[unsafe(export_name = #export_name)]
+            unsafe extern "Rust" fn #ident(#(#arg_names: #arg_types),*) #output {
+                #unsafety {
+                    <$ty as #trait_name>::#ident(#(#arg_names),*)
+                }
             }
-        }
+        };
     }
 }

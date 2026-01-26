@@ -1,8 +1,10 @@
+use std::fmt::Debug;
+
 use extern_trait::extern_trait;
 
 #[extern_trait(ResourceProxy)]
 #[allow(clippy::missing_safety_doc)]
-unsafe trait Resource: 'static + Send + Sync + AsRef<str> {
+unsafe trait Resource: 'static + Send + Sync + AsRef<str> + Debug + Default + Clone {
     fn new() -> Self;
     fn count(&self) -> usize;
 }
@@ -14,6 +16,7 @@ mod resource_impl {
 
     static GLOBAL: LazyLock<Arc<String>> = LazyLock::new(|| Arc::new("Hello, world!".to_string()));
 
+    #[derive(Debug, Clone)]
     struct ActualResource(Arc<String>);
 
     impl AsRef<str> for ActualResource {
@@ -32,6 +35,12 @@ mod resource_impl {
             Arc::strong_count(&self.0)
         }
     }
+
+    impl Default for ActualResource {
+        fn default() -> Self {
+            Self::new()
+        }
+    }
 }
 
 #[test]
@@ -48,9 +57,14 @@ fn test_resource() {
     assert_eq!(res.as_ref(), "Hello, world!");
 
     {
-        let res = ResourceProxy::new();
+        let res = ResourceProxy::default();
         assert_eq!(res.count(), 3);
     }
 
     assert_eq!(res.count(), 2);
+
+    assert_eq!(
+        format!("{:?}", res.clone()),
+        "ActualResource(\"Hello, world!\")"
+    );
 }

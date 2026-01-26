@@ -1,4 +1,5 @@
-use quote::format_ident;
+use proc_macro2::TokenStream;
+use quote::{ToTokens, format_ident, quote};
 use syn::{
     Error, FnArg, GenericArgument, Ident, Lifetime, PathArguments, Result, ReturnType, Signature,
     Token, Type, TypePtr, TypeReference, parse_quote,
@@ -166,6 +167,7 @@ impl TypeExt for Type {
     }
 }
 
+#[derive(Debug, Clone)]
 enum MaybeSelf {
     Self_(SelfKind),
     Typed(Box<Type>),
@@ -180,6 +182,7 @@ impl MaybeSelf {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct VerifiedSignature {
     pub unsafety: Option<Token![unsafe]>,
     pub ident: Ident,
@@ -300,5 +303,19 @@ impl VerifiedSignature {
             None => ReturnType::Default,
             Some(arg) => ReturnType::Type(parse_quote!(->), arg.to_type(self_type.clone())),
         }
+    }
+}
+
+impl ToTokens for VerifiedSignature {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        let unsafety = &self.unsafety;
+        let ident = &self.ident;
+        let arg_names = self.arg_names();
+        let arg_types = self.arg_types(parse_quote!(Self));
+        let output = self.return_type(parse_quote!(Self));
+
+        tokens.extend(quote! {
+            #unsafety fn #ident(#(#arg_names: #arg_types),*) #output
+        });
     }
 }
