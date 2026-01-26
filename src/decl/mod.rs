@@ -1,13 +1,17 @@
+mod proxy;
+mod sig;
+mod sym;
+
 use proc_macro2::{Span, TokenStream};
 use quote::{ToTokens, format_ident, quote};
 use syn::{
-    Error, FnArg, GenericArgument, Ident, ItemStruct, ItemTrait, PathArguments, PathSegment,
-    Result, ReturnType, Signature, TraitItem, Type, TypeParamBound, parse_quote,
+    Error, GenericArgument, Ident, ItemTrait, PathArguments, PathSegment, Result,
+    TraitBoundModifier, TraitItem, Type, TypeParamBound, parse_quote,
 };
 
-use crate::ty::{SelfKind, TypeExt};
+use self::{proxy::Proxy, sig::VerifiedSignature, sym::Symbol};
 
-pub fn expand(proxy: ItemStruct, input: ItemTrait) -> Result<TokenStream> {
+pub fn expand(proxy: Proxy, input: ItemTrait) -> Result<TokenStream> {
     if !input.generics.params.is_empty() {
         return Err(Error::new_spanned(
             input.generics,
@@ -29,19 +33,7 @@ pub fn expand(proxy: ItemStruct, input: ItemTrait) -> Result<TokenStream> {
     let macro_name = format_ident!("__extern_trait_{}", trait_name);
     let mut macro_content = TokenStream::new();
 
-    let symbol_prefix = format!(
-        "__extern_trait_{}_{}_{}_{}",
-        std::env::var("CARGO_PKG_NAME")
-            .as_deref()
-            .unwrap_or("<unknown>"),
-        std::env::var("CARGO_PKG_VERSION")
-            .as_deref()
-            .unwrap_or("<unknown>"),
-        std::env::var("CARGO_CRATE_NAME")
-            .as_deref()
-            .unwrap_or("<unknown>"),
-        trait_name
-    );
+    let sym = Symbol::new(trait_name.to_string());
 
     for t in &input.items {
         let TraitItem::Fn(f) = t else {
@@ -52,12 +44,12 @@ pub fn expand(proxy: ItemStruct, input: ItemTrait) -> Result<TokenStream> {
             continue;
         };
 
-        let export_name = format!("{}_{}", symbol_prefix, f.sig.ident);
+        let export_name = format!("{:?}", sym.clone().with_name(f.sig.ident.to_string()));
 
-        match generate_proxy_impl(proxy_name, &export_name, &f.sig) {
-            Ok(i) => {
-                impl_content.extend(i);
-                macro_content.extend(generate_macro_rules(None, &export_name, &f.sig));
+        match VerifiedSignature::try_new(&f.sig) {
+            Ok(sig) => {
+                impl_content.extend(generate_proxy_impl(proxy_name, &export_name, &sig));
+                macro_content.extend(generate_macro_rules(None, &export_name, &sig));
             }
             Err(e) => {
                 impl_content.extend(e.to_compile_error());
@@ -69,10 +61,13 @@ pub fn expand(proxy: ItemStruct, input: ItemTrait) -> Result<TokenStream> {
 
     for t in &input.supertraits {
         if let TypeParamBound::Trait(t) = t
+            && matches!(t.modifier, TraitBoundModifier::None)
+            && t.lifetimes.is_none()
             && t.path.leading_colon.is_none()
             && t.path.segments.len() == 1
         {
-            let PathSegment { ident, arguments } = &t.path.segments[0];
+            let t = &t.path.segments[0];
+            let PathSegment { ident, arguments } = &t;
             if ident == "Send" {
                 extra_impls.extend(quote! {
                     unsafe impl Send for #proxy_name {}
@@ -85,26 +80,27 @@ pub fn expand(proxy: ItemStruct, input: ItemTrait) -> Result<TokenStream> {
                 && let PathArguments::AngleBracketed(args) = arguments
                 && let Some(GenericArgument::Type(ty)) = args.args.first()
             {
-                let export_name = format!("{symbol_prefix}_AsRef_{}", ty.to_token_stream());
-                let sig = parse_quote!(fn as_ref(&self) -> &#ty);
-                let impl_content = generate_proxy_impl(proxy_name, &export_name, &sig)?;
+                let export_name = format!(
+                    "{:?}",
+                    sym.clone()
+                        .with_name(format!("{}::as_ref", t.to_token_stream()))
+                );
+                let sig =
+                    VerifiedSignature::try_new(&parse_quote!(fn as_ref(&self) -> &#ty)).unwrap();
+                let impl_content = generate_proxy_impl(proxy_name, &export_name, &sig);
                 extra_impls.extend(quote! {
-                    impl AsRef<#ty> for #proxy_name {
+                    impl #t for #proxy_name {
                         #impl_content
                     }
                 });
-                macro_content.extend(generate_macro_rules(
-                    Some(quote!(AsRef<#ty>)),
-                    &export_name,
-                    &sig,
-                ));
+                macro_content.extend(generate_macro_rules(Some(quote!(#t)), &export_name, &sig));
             }
             // TODO: support more traits
         }
     }
 
-    let drop_name = format!("{symbol_prefix}_drop");
-    let reflect_name = format!("{symbol_prefix}_reflect");
+    let drop_name = format!("{:?}", sym.clone().with_name("drop"),);
+    let reflect_name = format!("{:?}", sym.clone().with_name("reflect"),);
     let generic_doc = format!(
         "`T` must implement [`{}`] via `#[extern_trait]`.",
         trait_name
@@ -201,133 +197,53 @@ pub fn expand(proxy: ItemStruct, input: ItemTrait) -> Result<TokenStream> {
 fn generate_proxy_impl(
     proxy_name: &Ident,
     export_name: &str,
-    sig: &Signature,
-) -> Result<TokenStream> {
-    let mut sig = sig.clone();
+    sig: &VerifiedSignature,
+) -> TokenStream {
+    let unsafety = sig.unsafety;
     let ident = &sig.ident;
-
-    let args = sig
-        .inputs
-        .iter_mut()
-        .enumerate()
-        .map(|(i, arg)| match arg {
-            FnArg::Receiver(_) => format_ident!("self"),
-            FnArg::Typed(arg) => {
-                let name = format_ident!("_{}", i);
-                arg.pat = parse_quote!(#name);
-                name
-            }
-        })
-        .collect::<Vec<_>>();
 
     let proxy: Box<Type> = parse_quote!(#proxy_name);
 
-    let output = match &sig.output {
-        ReturnType::Default => ReturnType::Default,
-        ReturnType::Type(arr, ty) => ReturnType::Type(*arr, {
-            if ty.contains_self() {
-                if let Some(kind) = ty.self_kind() {
-                    kind.into_type_for(proxy.clone())
-                } else {
-                    return Err(Error::new_spanned(
-                        ty,
-                        "Too complex return type for #[extern_trait]",
-                    ));
-                }
-            } else {
-                ty.clone()
-            }
-        }),
-    };
+    let arg_names = sig.arg_names().collect::<Vec<_>>();
+    let arg_types = sig.arg_types(proxy.clone()).collect::<Vec<_>>();
+    let output = sig.return_type(proxy.clone());
 
-    let inputs = sig
-        .inputs
-        .iter()
-        .map(|arg| match arg {
-            FnArg::Receiver(arg) => &arg.ty,
-            FnArg::Typed(arg) => &arg.ty,
-        })
-        .map(|ty| {
-            if ty.contains_self() {
-                if let Some(kind) = ty.self_kind() {
-                    if matches!(kind, SelfKind::Value) {
-                        return Err(Error::new_spanned(
-                            ty,
-                            "Passing `Self` by value is not supported for #[extern_trait] yet",
-                        ));
-                    }
-                    Ok(kind.into_type_for(proxy.clone()))
-                } else {
-                    Err(Error::new_spanned(
-                        ty,
-                        "Too complex argument type for #[extern_trait]",
-                    ))
-                }
-            } else {
-                Ok(ty.clone())
-            }
-        })
-        .collect::<Result<Vec<_>>>()?;
-
-    Ok(quote! {
-        #sig {
+    quote! {
+        #unsafety fn #ident(#(#arg_names: #arg_types),*) #output {
             unsafe extern "Rust" {
                 #[link_name = #export_name]
-                safe fn #ident(#(_: #inputs),*) #output;
+                unsafe fn #ident(#(_: #arg_types),*) #output;
             }
-            #ident(#(#args),*)
+            unsafe {
+                #ident(#(#arg_names),*)
+            }
         }
-    })
+    }
 }
 
 fn generate_macro_rules(
-    trait_: Option<TokenStream>,
+    trait_name: Option<TokenStream>,
     export_name: &str,
-    sig: &Signature,
+    sig: &VerifiedSignature,
 ) -> TokenStream {
+    let unsafety = sig.unsafety;
     let ident = &sig.ident;
 
     let placeholder = Box::new(Type::Verbatim(quote!($ty)));
 
-    let output = match &sig.output {
-        ReturnType::Default => ReturnType::Default,
-        ReturnType::Type(arr, ty) => ReturnType::Type(
-            *arr,
-            if ty.contains_self() {
-                ty.self_kind().unwrap().into_type_for(placeholder.clone())
-            } else {
-                ty.clone()
-            },
-        ),
-    };
+    let arg_names = sig.arg_names_no_self().collect::<Vec<_>>();
+    let arg_types = sig.arg_types(placeholder.clone()).collect::<Vec<_>>();
+    let output = sig.return_type(placeholder.clone());
 
-    let (args, arg_tys): (Vec<_>, Vec<_>) = sig
-        .inputs
-        .iter()
-        .map(|arg| match arg {
-            FnArg::Receiver(arg) => &arg.ty,
-            FnArg::Typed(arg) => &arg.ty,
-        })
-        .enumerate()
-        .map(|(i, ty)| {
-            (
-                format_ident!("_{}", i),
-                if ty.contains_self() {
-                    ty.self_kind().unwrap().into_type_for(placeholder.clone())
-                } else {
-                    ty.clone()
-                },
-            )
-        })
-        .unzip();
-
-    let trait_ = trait_.unwrap_or_else(|| quote!($trait));
+    let trait_name = trait_name.unwrap_or_else(|| quote!($trait));
 
     quote! {
         #[doc(hidden)]
         #[unsafe(export_name = #export_name)]
-        unsafe extern "Rust" fn #ident(#(#args: #arg_tys),*) #output {
-            <$ty as #trait_>::#ident(#(#args),*)
+        unsafe extern "Rust" fn #ident(#(#arg_names: #arg_types),*) #output {
+            #unsafety {
+                <$ty as #trait_name>::#ident(#(#arg_names),*)
+            }
         }
     }
 }
