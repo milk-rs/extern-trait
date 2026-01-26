@@ -2,7 +2,7 @@ use extern_trait::extern_trait;
 
 #[extern_trait(TupleProxy)]
 #[allow(clippy::missing_safety_doc)]
-unsafe trait Tuple {
+unsafe trait Tuple: 'static {
     fn new(a: usize, b: usize) -> Self;
     fn get(&self) -> (usize, usize);
 }

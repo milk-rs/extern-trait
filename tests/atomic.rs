@@ -2,7 +2,7 @@ use extern_trait::extern_trait;
 
 #[extern_trait(AtomicProxy)]
 #[allow(clippy::missing_safety_doc)]
-unsafe trait Atomic {
+unsafe trait Atomic: 'static {
     fn new(v: i32) -> Self;
     fn get(&self) -> i32;
     fn set(&self, v: i32);

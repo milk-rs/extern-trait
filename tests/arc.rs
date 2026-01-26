@@ -2,7 +2,7 @@ use extern_trait::extern_trait;
 
 #[extern_trait(ResourceProxy)]
 #[allow(clippy::missing_safety_doc)]
-unsafe trait Resource: Send + Sync + AsRef<str> {
+unsafe trait Resource: 'static + Send + Sync + AsRef<str> {
     fn new() -> Self;
     fn count(&self) -> usize;
 }

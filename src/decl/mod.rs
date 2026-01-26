@@ -19,7 +19,6 @@ pub fn expand(proxy: Proxy, input: ItemTrait) -> Result<TokenStream> {
         ));
     }
 
-    let trait_ident = &input.ident;
     let Some(unsafety) = &input.unsafety else {
         return Err(Error::new(
             Span::call_site(),
@@ -27,10 +26,22 @@ pub fn expand(proxy: Proxy, input: ItemTrait) -> Result<TokenStream> {
         ));
     };
 
-    let proxy_ident = &proxy.ident;
-    let mut impl_content = TokenStream::new();
+    if !input
+        .supertraits
+        .iter()
+        .any(|t| t == &parse_quote!('static))
+    {
+        return Err(Error::new_spanned(
+            &input.supertraits,
+            "#[extern_trait] must be 'static",
+        ));
+    }
 
+    let trait_ident = &input.ident;
+    let proxy_ident = &proxy.ident;
     let macro_ident = format_ident!("__extern_trait_{}", trait_ident);
+
+    let mut impl_content = TokenStream::new();
     let mut macro_content = TokenStream::new();
 
     let sym = Symbol::new(trait_ident.to_string());
@@ -57,7 +68,7 @@ pub fn expand(proxy: Proxy, input: ItemTrait) -> Result<TokenStream> {
         }
     }
 
-    let mut extra_impls = TokenStream::new();
+    let mut super_impls = TokenStream::new();
 
     for t in &input.supertraits {
         if let TypeParamBound::Trait(t) = t
@@ -69,11 +80,11 @@ pub fn expand(proxy: Proxy, input: ItemTrait) -> Result<TokenStream> {
             let t = &t.path.segments[0];
             let PathSegment { ident, arguments } = &t;
             if ident == "Send" {
-                extra_impls.extend(quote! {
+                super_impls.extend(quote! {
                     unsafe impl Send for #proxy_ident {}
                 });
             } else if ident == "Sync" {
-                extra_impls.extend(quote! {
+                super_impls.extend(quote! {
                     unsafe impl Sync for #proxy_ident {}
                 });
             } else if ident == "AsRef"
@@ -88,14 +99,14 @@ pub fn expand(proxy: Proxy, input: ItemTrait) -> Result<TokenStream> {
                 let sig =
                     VerifiedSignature::try_new(&parse_quote!(fn as_ref(&self) -> &#ty)).unwrap();
                 let impl_content = generate_proxy_impl(proxy_ident, &export_name, &sig);
-                extra_impls.extend(quote! {
+                super_impls.extend(quote! {
                     impl #t for #proxy_ident {
                         #impl_content
                     }
                 });
                 macro_content.extend(generate_macro_rules(Some(quote!(#t)), &export_name, &sig));
             }
-            // TODO: support more traits
+            // TODO: support more super traits
         }
     }
 
@@ -116,7 +127,7 @@ pub fn expand(proxy: Proxy, input: ItemTrait) -> Result<TokenStream> {
             #impl_content
         }
 
-        #extra_impls
+        #super_impls
 
         impl Drop for #proxy_ident {
             fn drop(&mut self) {
@@ -138,7 +149,7 @@ pub fn expand(proxy: Proxy, input: ItemTrait) -> Result<TokenStream> {
                 }
             }
 
-            fn assert_type_is_impl<T: #trait_ident + 'static>() {
+            fn assert_type_is_impl<T: #trait_ident>() {
                 unsafe extern "Rust" {
                     #[link_name = #typeid_name]
                     safe fn typeid() -> ::core::any::TypeId;
@@ -153,28 +164,28 @@ pub fn expand(proxy: Proxy, input: ItemTrait) -> Result<TokenStream> {
 
             /// Convert the proxy type from the implementation type.
             #[doc = #panic_doc]
-            pub fn from_impl<T: #trait_ident + 'static>(value: T) -> Self {
+            pub fn from_impl<T: #trait_ident>(value: T) -> Self {
                 Self::assert_type_is_impl::<T>();
                 unsafe { Self::transmute::<T, #proxy_ident>()(value) }
             }
 
             /// Convert the proxy type into the implementation type.
             #[doc = #panic_doc]
-            pub fn into_impl<T: #trait_ident + 'static>(self) -> T {
+            pub fn into_impl<T: #trait_ident>(self) -> T {
                 Self::assert_type_is_impl::<T>();
                 unsafe { Self::transmute::<#proxy_ident, T>()(self) }
             }
 
             /// Returns a reference to the implementation type.
             #[doc = #panic_doc]
-            pub fn downcast_ref<T: #trait_ident + 'static>(&self) -> &T {
+            pub fn downcast_ref<T: #trait_ident>(&self) -> &T {
                 Self::assert_type_is_impl::<T>();
                 unsafe { &*(self as *const Self as *const T) }
             }
 
             /// Returns a mutable reference to the implementation type.
             #[doc = #panic_doc]
-            pub fn downcast_mut<T: #trait_ident + 'static>(&mut self) -> &mut T {
+            pub fn downcast_mut<T: #trait_ident>(&mut self) -> &mut T {
                 Self::assert_type_is_impl::<T>();
                 unsafe { &mut *(self as *mut Self as *mut T) }
             }

@@ -2,7 +2,7 @@ use extern_trait::extern_trait;
 
 #[extern_trait(StaticImpl)]
 #[allow(clippy::missing_safety_doc)]
-unsafe trait Static {
+unsafe trait Static: 'static {
     fn add(a: i32, b: i32) -> i32;
     fn sub(a: i32, b: i32) -> i32;
 }

@@ -2,7 +2,7 @@ use extern_trait::extern_trait;
 
 #[extern_trait(AnyProxy)]
 #[allow(clippy::missing_safety_doc)]
-unsafe trait Any {}
+unsafe trait Any: 'static {}
 
 struct AnyImpl(usize);
 
