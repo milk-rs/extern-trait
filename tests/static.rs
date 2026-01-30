@@ -1,8 +1,7 @@
 use extern_trait::extern_trait;
 
 #[extern_trait(StaticImpl)]
-#[allow(clippy::missing_safety_doc)]
-unsafe trait Static: 'static {
+trait Static {
     fn add(a: i32, b: i32) -> i32;
     fn sub(a: i32, b: i32) -> i32;
 }
@@ -12,8 +11,10 @@ mod static_impl {
 
     struct RemoteImpl;
 
+    unsafe impl extern_trait::ExternSafe for RemoteImpl {}
+
     #[extern_trait]
-    unsafe impl Static for RemoteImpl {
+    impl Static for RemoteImpl {
         fn add(a: i32, b: i32) -> i32 {
             a + b
         }

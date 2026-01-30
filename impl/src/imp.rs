@@ -23,10 +23,10 @@ pub fn expand(input: ItemImpl) -> Result<TokenStream> {
 
     let ty = &input.self_ty;
 
-    let assert_size = quote_spanned! {ty.span()=>
+    let assert = quote_spanned! {ty.span()=>
         const _: () = {
             assert!(
-                ::core::mem::size_of::<#ty>() <= ::core::mem::size_of::<usize>() * 2,
+                ::core::mem::size_of::<#ty>() <= ::core::mem::size_of::<*const ()>() * 2,
                 concat!(stringify!(#ty), " is too large to be used with #[extern_trait]")
             );
         };
@@ -35,7 +35,7 @@ pub fn expand(input: ItemImpl) -> Result<TokenStream> {
     Ok(quote! {
         #input
 
-        #assert_size
+        #assert
 
         #trait_!(#trait_: #ty);
     })

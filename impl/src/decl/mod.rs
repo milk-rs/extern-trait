@@ -3,16 +3,18 @@ mod sig;
 mod supertraits;
 mod sym;
 
-use proc_macro2::{Span, TokenStream};
+use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::{
     Error, Ident, ItemTrait, Result, TraitBoundModifier, TraitItem, Type, TypeParamBound,
     parse_quote,
 };
 
+use crate::attr::extern_trait_path;
+
 use self::{proxy::Proxy, sig::VerifiedSignature, sym::Symbol};
 
-pub fn expand(proxy: Proxy, input: ItemTrait) -> Result<TokenStream> {
+pub fn expand(proxy: Proxy, mut input: ItemTrait) -> Result<TokenStream> {
     if !input.generics.params.is_empty() {
         return Err(Error::new_spanned(
             input.generics,
@@ -20,32 +22,16 @@ pub fn expand(proxy: Proxy, input: ItemTrait) -> Result<TokenStream> {
         ));
     }
 
-    let Some(unsafety) = &input.unsafety else {
-        return Err(Error::new(
-            Span::call_site(),
-            "#[extern_trait] must be unsafe",
-        ));
-    };
+    let extern_trait = extern_trait_path(&mut input.attrs)?;
 
-    if !input
-        .supertraits
-        .iter()
-        .any(|t| t == &parse_quote!('static))
-    {
-        return Err(Error::new_spanned(
-            &input.supertraits,
-            "#[extern_trait] must be 'static",
-        ));
-    }
-
+    let unsafety = &input.unsafety;
     let trait_ident = &input.ident;
     let proxy_ident = &proxy.ident;
-    let macro_ident = format_ident!("__extern_trait_{}", trait_ident);
+
+    let sym = Symbol::new(trait_ident.to_string());
 
     let mut impl_content = TokenStream::new();
     let mut macro_content = TokenStream::new();
-
-    let sym = Symbol::new(trait_ident.to_string());
 
     for t in &input.items {
         let TraitItem::Fn(f) = t else {
@@ -88,6 +74,13 @@ pub fn expand(proxy: Proxy, input: ItemTrait) -> Result<TokenStream> {
         }
     }
 
+    // We can unconditionally add this since trait bounds are allowed to be repeated.
+    input
+        .supertraits
+        .push(parse_quote!(#extern_trait::ExternSafe));
+
+    let macro_ident = format_ident!("__extern_trait_{}", trait_ident);
+
     let drop_name = format!("{:?}", sym.clone().with_name("drop"));
 
     let typeid_name = format!("{:?}", sym.clone().with_name("typeid"));
@@ -100,6 +93,8 @@ pub fn expand(proxy: Proxy, input: ItemTrait) -> Result<TokenStream> {
         #input
 
         #proxy
+
+        unsafe impl #extern_trait::ExternSafe for #proxy_ident {}
 
         #unsafety impl #trait_ident for #proxy_ident {
             #impl_content
@@ -130,10 +125,11 @@ pub fn expand(proxy: Proxy, input: ItemTrait) -> Result<TokenStream> {
             fn assert_type_is_impl<T: #trait_ident>() {
                 unsafe extern "Rust" {
                     #[link_name = #typeid_name]
-                    safe fn typeid() -> ::core::any::TypeId;
+                    safe static TYPEID: #extern_trait::__private::ConstTypeId;
                 }
+                let typeid = #extern_trait::__private::ConstTypeId::of::<T>();
                 assert!(
-                    typeid() == ::core::any::TypeId::of::<T>(),
+                    typeid == TYPEID,
                     "`{}` is not an implementation type for #[extern_trait] `{}`",
                     ::core::any::type_name::<T>(),
                     stringify!(#trait_ident)
@@ -182,9 +178,8 @@ pub fn expand(proxy: Proxy, input: ItemTrait) -> Result<TokenStream> {
                     }
 
                     #[unsafe(export_name = #typeid_name)]
-                    extern "Rust" fn typeid() -> ::core::any::TypeId {
-                        ::core::any::TypeId::of::<$ty>()
-                    }
+                    static TYPEID: #extern_trait::__private::ConstTypeId =
+                        #extern_trait::__private::ConstTypeId::of::<$ty>();
                 };
             };
         }
@@ -240,7 +235,7 @@ fn generate_macro_rules(
     quote! {
         const _: () = {
             #[unsafe(export_name = #export_name)]
-            unsafe extern "Rust" fn #ident(#(#arg_names: #arg_types),*) #output {
+            extern "Rust" fn #ident(#(#arg_names: #arg_types),*) #output {
                 #unsafety {
                     <$ty as #trait_name>::#ident(#(#arg_names),*)
                 }

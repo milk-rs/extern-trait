@@ -1,8 +1,7 @@
 use extern_trait::extern_trait;
 
 #[extern_trait(TupleProxy)]
-#[allow(clippy::missing_safety_doc)]
-unsafe trait Tuple: 'static {
+trait Tuple {
     fn new(a: usize, b: usize) -> Self;
     fn get(&self) -> (usize, usize);
 }
@@ -12,8 +11,10 @@ mod tuple_impl {
 
     struct TupleImpl(usize, usize);
 
+    unsafe impl extern_trait::ExternSafe for TupleImpl {}
+
     #[extern_trait]
-    unsafe impl Tuple for TupleImpl {
+    impl Tuple for TupleImpl {
         fn new(a: usize, b: usize) -> Self {
             Self(a, b)
         }

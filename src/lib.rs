@@ -1,18 +1,14 @@
 #![doc = include_str!("../README.md")]
 
-mod decl;
-mod imp;
+pub use extern_trait_impl::*;
 
-use proc_macro::TokenStream;
-use syn::{Error, parse_macro_input};
+/// TODO
+/// # Safety
+/// TODO
+pub unsafe trait ExternSafe {}
 
-#[proc_macro_attribute]
-pub fn extern_trait(args: TokenStream, input: TokenStream) -> TokenStream {
-    if !args.is_empty() {
-        decl::expand(parse_macro_input!(args), parse_macro_input!(input))
-    } else {
-        imp::expand(parse_macro_input!(input))
-    }
-    .unwrap_or_else(Error::into_compile_error)
-    .into()
+#[doc(hidden)]
+pub mod __private {
+    #[doc(hidden)]
+    pub use typeid::ConstTypeId;
 }

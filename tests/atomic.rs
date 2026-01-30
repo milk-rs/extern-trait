@@ -1,8 +1,7 @@
 use extern_trait::extern_trait;
 
 #[extern_trait(AtomicProxy)]
-#[allow(clippy::missing_safety_doc)]
-unsafe trait Atomic: 'static {
+trait Atomic {
     fn new(v: i32) -> Self;
     fn get(&self) -> i32;
     fn set(&self, v: i32);
@@ -15,8 +14,10 @@ mod atomic_impl {
 
     struct AtomicImpl(AtomicI32);
 
+    unsafe impl extern_trait::ExternSafe for AtomicImpl {}
+
     #[extern_trait]
-    unsafe impl Atomic for AtomicImpl {
+    impl Atomic for AtomicImpl {
         fn new(v: i32) -> Self {
             Self(AtomicI32::new(v))
         }

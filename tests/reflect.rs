@@ -1,13 +1,14 @@
 use extern_trait::extern_trait;
 
 #[extern_trait(AnyProxy)]
-#[allow(clippy::missing_safety_doc)]
-unsafe trait Any: 'static {}
+trait Any: 'static {}
 
 struct AnyImpl(usize);
 
+unsafe impl extern_trait::ExternSafe for AnyImpl {}
+
 #[extern_trait]
-unsafe impl Any for AnyImpl {}
+impl Any for AnyImpl {}
 
 #[test]
 fn test_any() {

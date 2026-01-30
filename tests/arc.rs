@@ -3,8 +3,7 @@ use std::fmt::Debug;
 use extern_trait::extern_trait;
 
 #[extern_trait(ResourceProxy)]
-#[allow(clippy::missing_safety_doc)]
-unsafe trait Resource: 'static + Send + Sync + AsRef<str> + Debug + Default + Clone {
+trait Resource: Send + Sync + AsRef<str> + Debug + Default + Clone {
     fn new() -> Self;
     fn count(&self) -> usize;
 }
@@ -25,8 +24,10 @@ mod resource_impl {
         }
     }
 
+    unsafe impl extern_trait::ExternSafe for ActualResource {}
+
     #[extern_trait]
-    unsafe impl Resource for ActualResource {
+    impl Resource for ActualResource {
         fn new() -> Self {
             Self(GLOBAL.clone())
         }
