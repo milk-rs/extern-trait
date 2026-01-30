@@ -8,17 +8,15 @@ Generate an opaque type for a trait to forward to a foreign implementation.
 ## Example
 
 ```rust
-use extern_trait::extern_trait;
+# use extern_trait::{ExternSafe, extern_trait};
 
 // In crate A
 /// A Hello trait.
-/// # Safety
-/// See [`extern_trait`].
 #[extern_trait(
     /// A proxy type for [`Hello`].
     pub(crate) HelloProxy
 )]
-pub unsafe trait Hello: 'static {
+pub trait Hello {
     fn new(num: i32) -> Self;
     fn hello(&self);
 }
@@ -29,16 +27,18 @@ v.hello();
 // In crate B
 struct HelloImpl(i32);
 
-    #[extern_trait]
-    unsafe impl Hello for HelloImpl {
-        fn new(num: i32) -> Self {
-            Self(num)
-        }
+unsafe impl ExternSafe for HelloImpl {}
 
-        fn hello(&self) {
-            println!("Hello, {}", self.0)
-        }
+#[extern_trait]
+impl Hello for HelloImpl {
+    fn new(num: i32) -> Self {
+        Self(num)
     }
+
+    fn hello(&self) {
+        println!("Hello, {}", self.0)
+    }
+}
 ```
 
 This will generate the following code (adapted):
@@ -50,9 +50,7 @@ This will generate the following code (adapted):
 ```rust
 // In crate A
 /// A Hello trait.
-/// # Safety
-/// See [`extern_trait`].
-pub unsafe trait Hello: 'static {
+pub trait Hello {
     fn new(num: i32) -> Self;
     fn hello(&self);
 }
@@ -60,7 +58,7 @@ pub unsafe trait Hello: 'static {
 /// A proxy type for [`Hello`].
 pub(crate) struct HelloProxy(*const (), *const ());
 
-unsafe impl Hello for HelloProxy {
+impl Hello for HelloProxy {
     fn new(_0: i32) -> Self {
         unsafe extern "Rust" {
             #[link_name = "Symbol { ..., trait_name: \"Hello\", ..., name: \"new\" }"]
@@ -93,7 +91,7 @@ impl Drop for HelloProxy {
 struct HelloImpl(i32);
 
 // #[extern_trait]
-unsafe impl Hello for HelloImpl {
+impl Hello for HelloImpl {
     fn new(num: i32) -> Self {
         Self(num)
     }
@@ -138,8 +136,8 @@ An `#[extern_trait]` may have supertraits to forward more trait implementations.
 ```rust
 use extern_trait::extern_trait;
 
-#[extern_trait(FooImpl)]
-unsafe trait Foo: 'static + Send {
+#[extern_trait(FooProxy)]
+trait Foo: Send {
     fn foo();
 }
 ```
