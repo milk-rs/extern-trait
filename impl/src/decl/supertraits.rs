@@ -27,7 +27,7 @@ macro_rules! supertrait {
             functions: vec![
                 $({
                     let item: TraitItemFn = parse_quote!($f);
-                    VerifiedSignature::try_new(&item.sig).unwrap()
+                    VerifiedSignature::try_new(None, &item.sig).unwrap()
                 },)*
             ],
         }
@@ -111,7 +111,7 @@ pub fn generate_impl(
             let sig = replace_map
                 .iter()
                 .fold(sig, |acc, (k, v)| acc.replace(k, v));
-            VerifiedSignature::try_new(&syn::parse_str::<Signature>(&sig).unwrap()).unwrap()
+            VerifiedSignature::try_new(None, &syn::parse_str::<Signature>(&sig).unwrap()).unwrap()
         })
         .collect::<Vec<_>>();
 

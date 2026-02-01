@@ -2,13 +2,16 @@
 
 use syn::{
     Attribute, Path,
+    meta::ParseNestedMeta,
     parse::{Error, Result},
     parse_quote,
 };
 
-// #[extern_trait(crate = path::to::extern_trait)]
-pub(crate) fn extern_trait_path(attrs: &mut Vec<Attribute>) -> Result<Path> {
-    let mut extern_trait_path = None;
+// #[extern_trait(...)]
+pub(crate) fn parse_extern_trait_attr<F>(attrs: &mut Vec<Attribute>, mut f: F) -> Result<()>
+where
+    F: FnMut(ParseNestedMeta) -> Result<()>,
+{
     let mut errors: Option<Error> = None;
 
     attrs.retain(|attr| {
@@ -16,16 +19,8 @@ pub(crate) fn extern_trait_path(attrs: &mut Vec<Attribute>) -> Result<Path> {
             return true;
         }
         if let Err(err) = attr.parse_nested_meta(|meta| {
-            if meta.path.is_ident("crate") {
-                if extern_trait_path.is_some() {
-                    return Err(meta.error("duplicate extern_trait crate attribute"));
-                }
-                let path = meta.value()?.call(Path::parse_mod_style)?;
-                extern_trait_path = Some(path);
-                Ok(())
-            } else {
-                Err(meta.error("unsupported extern_trait attribute"))
-            }
+            f(meta)?;
+            Ok(())
         }) {
             match &mut errors {
                 None => errors = Some(err),
@@ -36,7 +31,27 @@ pub(crate) fn extern_trait_path(attrs: &mut Vec<Attribute>) -> Result<Path> {
     });
 
     match errors {
-        None => Ok(extern_trait_path.unwrap_or_else(|| parse_quote!(::extern_trait))),
+        None => Ok(()),
         Some(errors) => Err(errors),
     }
+}
+
+// #[extern_trait(crate = path::to::extern_trait)]
+pub(crate) fn extern_trait_path(attrs: &mut Vec<Attribute>) -> Result<Path> {
+    let mut extern_trait_path = None;
+
+    parse_extern_trait_attr(attrs, |meta| {
+        if meta.path.is_ident("crate") {
+            if extern_trait_path.is_some() {
+                return Err(meta.error("duplicate extern_trait crate attribute"));
+            }
+            let path = meta.value()?.call(Path::parse_mod_style)?;
+            extern_trait_path = Some(path);
+            Ok(())
+        } else {
+            Err(meta.error("unsupported extern_trait attribute"))
+        }
+    })?;
+
+    Ok(extern_trait_path.unwrap_or_else(|| parse_quote!(::extern_trait)))
 }

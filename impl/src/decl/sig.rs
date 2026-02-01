@@ -1,9 +1,11 @@
 use proc_macro2::TokenStream;
 use quote::{ToTokens, format_ident, quote};
 use syn::{
-    Error, FnArg, GenericArgument, Ident, Lifetime, PathArguments, Result, ReturnType, Signature,
-    Token, Type, TypePtr, TypeReference, parse_quote,
+    Attribute, Error, FnArg, GenericArgument, Ident, Lifetime, LitStr, PathArguments, Result,
+    ReturnType, Signature, Token, Type, TypePtr, TypeReference, parse_quote,
 };
+
+use crate::attr::parse_extern_trait_attr;
 
 #[derive(Debug, Clone)]
 enum SelfKind {
@@ -182,8 +184,59 @@ impl MaybeSelf {
     }
 }
 
+#[derive(Debug, Default, Clone)]
+pub enum ExternAbi {
+    #[default]
+    Rust,
+    C,
+}
+
+impl ExternAbi {
+    // #[extern_trait(abi = "ABI")]
+    fn from_attrs(attrs: &mut Vec<Attribute>) -> Result<Self> {
+        let mut abi = None;
+
+        parse_extern_trait_attr(attrs, |meta| {
+            if meta.path.is_ident("abi") {
+                if abi.is_some() {
+                    return Err(meta.error("duplicate extern_trait abi attribute"));
+                }
+                let value: LitStr = meta.value()?.parse()?;
+                match value.value().as_str() {
+                    "Rust" => abi = Some(ExternAbi::Rust),
+                    "C" => abi = Some(ExternAbi::C),
+                    _ => {
+                        return Err(
+                            meta.error("unsupported extern_trait abi, expected `Rust` or `C`")
+                        );
+                    }
+                }
+                Ok(())
+            } else {
+                Err(meta.error("unsupported extern_trait attribute"))
+            }
+        })?;
+
+        Ok(abi.unwrap_or_default())
+    }
+}
+
+impl ToTokens for ExternAbi {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        tokens.extend(match self {
+            ExternAbi::Rust => {
+                quote! { extern "Rust" }
+            }
+            ExternAbi::C => {
+                quote! { extern "C" }
+            }
+        });
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct VerifiedSignature {
+    pub abi: ExternAbi,
     pub unsafety: Option<Token![unsafe]>,
     pub ident: Ident,
     inputs: Vec<MaybeSelf>,
@@ -191,7 +244,12 @@ pub struct VerifiedSignature {
 }
 
 impl VerifiedSignature {
-    pub fn try_new(sig: &Signature) -> Result<Self> {
+    pub fn try_new(attrs: Option<&mut Vec<Attribute>>, sig: &Signature) -> Result<Self> {
+        let abi = attrs
+            .map(ExternAbi::from_attrs)
+            .transpose()?
+            .unwrap_or_default();
+
         if sig.constness.is_some() {
             return Err(Error::new_spanned(
                 sig.constness,
@@ -202,14 +260,6 @@ impl VerifiedSignature {
             return Err(Error::new_spanned(
                 sig.asyncness,
                 "#[extern_trait] does not support async functions",
-            ));
-        }
-        if let Some(abi) = &sig.abi
-            && abi.name != Some(parse_quote!("Rust"))
-        {
-            return Err(Error::new_spanned(
-                abi,
-                "#[extern_trait] only supports Rust ABI",
             ));
         }
         if !sig.generics.params.is_empty() {
@@ -271,6 +321,7 @@ impl VerifiedSignature {
         };
 
         Ok(Self {
+            abi,
             unsafety: sig.unsafety,
             ident: sig.ident.clone(),
             inputs,

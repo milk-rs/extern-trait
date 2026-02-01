@@ -32,7 +32,7 @@ pub fn expand(proxy: Proxy, mut input: ItemTrait) -> Result<TokenStream> {
     let mut impl_content = TokenStream::new();
     let mut macro_content = TokenStream::new();
 
-    for t in &input.items {
+    for t in &mut input.items {
         let TraitItem::Fn(f) = t else {
             impl_content.extend(
                 Error::new_spanned(t, "#[extern_trait] may only contain methods")
@@ -43,7 +43,7 @@ pub fn expand(proxy: Proxy, mut input: ItemTrait) -> Result<TokenStream> {
 
         let export_name = format!("{:?}", sym.clone().with_name(f.sig.ident.to_string()));
 
-        match VerifiedSignature::try_new(&f.sig) {
+        match VerifiedSignature::try_new(Some(&mut f.attrs), &f.sig) {
             Ok(sig) => {
                 impl_content.extend(generate_proxy_impl(proxy_ident, &export_name, &sig));
                 macro_content.extend(generate_macro_rules(None, &export_name, &sig));
@@ -72,11 +72,6 @@ pub fn expand(proxy: Proxy, mut input: ItemTrait) -> Result<TokenStream> {
             }
         }
     }
-
-    // We can unconditionally add this since trait bounds are allowed to be repeated.
-    input
-        .supertraits
-        .push(parse_quote!(#extern_trait::ExternSafe));
 
     let macro_ident = format_ident!("__extern_trait_{}", trait_ident);
 
@@ -194,6 +189,7 @@ fn generate_proxy_impl(
     export_name: &str,
     sig: &VerifiedSignature,
 ) -> TokenStream {
+    let abi = &sig.abi;
     let unsafety = sig.unsafety;
     let ident = &sig.ident;
 
@@ -205,7 +201,7 @@ fn generate_proxy_impl(
 
     quote! {
         #unsafety fn #ident(#(#arg_names: #arg_types),*) #output {
-            unsafe extern "Rust" {
+            unsafe #abi {
                 #[link_name = #export_name]
                 unsafe fn #ident(#(_: #arg_types),*) #output;
             }
@@ -221,6 +217,7 @@ fn generate_macro_rules(
     export_name: &str,
     sig: &VerifiedSignature,
 ) -> TokenStream {
+    let abi = &sig.abi;
     let unsafety = sig.unsafety;
     let ident = &sig.ident;
 
@@ -235,7 +232,7 @@ fn generate_macro_rules(
     quote! {
         const _: () = {
             #[unsafe(export_name = #export_name)]
-            extern "Rust" fn #ident(#(#arg_names: #arg_types),*) #output {
+            #abi fn #ident(#(#arg_names: #arg_types),*) #output {
                 #unsafety {
                     <$ty as #trait_name>::#ident(#(#arg_names),*)
                 }

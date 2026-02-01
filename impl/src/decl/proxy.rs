@@ -27,6 +27,7 @@ impl ToTokens for Proxy {
 
         tokens.append_all(quote! {
             #(#attrs)*
+            #[repr(C)]
             #vis struct #ident(*const (), *const ());
         });
     }
