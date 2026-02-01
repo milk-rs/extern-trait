@@ -1,3 +1,4 @@
+#![no_std]
 #![doc = include_str!("../README.md")]
 
 pub use extern_trait_impl::*;
@@ -12,3 +13,5 @@ pub mod __private {
     #[doc(hidden)]
     pub use typeid::ConstTypeId;
 }
+
+mod impls;

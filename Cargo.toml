@@ -20,6 +20,9 @@ keywords.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[features]
+alloc = []
+
 [dependencies]
 extern-trait-impl = { version = "=0.3.0", path = "impl" }
 typeid = "1.0.3"
