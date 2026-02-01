@@ -1,7 +1,10 @@
 // Adapted from https://github.com/dtolnay/linkme/blob/1bb21a8f0f1f1df0301e7df06c435940d05c2447/impl/src/attr.rs
 
-use syn::parse::{Error, Result};
-use syn::{Attribute, Path, parse_quote};
+use syn::{
+    Attribute, Path,
+    parse::{Error, Result},
+    parse_quote,
+};
 
 // #[extern_trait(crate = path::to::extern_trait)]
 pub(crate) fn extern_trait_path(attrs: &mut Vec<Attribute>) -> Result<Path> {

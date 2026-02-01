@@ -10,9 +10,8 @@ use syn::{
     parse_quote,
 };
 
-use crate::attr::extern_trait_path;
-
 use self::{proxy::Proxy, sig::VerifiedSignature, sym::Symbol};
+use crate::attr::extern_trait_path;
 
 pub fn expand(proxy: Proxy, mut input: ItemTrait) -> Result<TokenStream> {
     if !input.generics.params.is_empty() {
@@ -85,7 +84,8 @@ pub fn expand(proxy: Proxy, mut input: ItemTrait) -> Result<TokenStream> {
 
     let typeid_name = format!("{:?}", sym.clone().with_name("typeid"));
     let panic_doc = format!(
-        "# Panics\nPanics if the type parameter `T` is not an implementation type for #[extern_trait] `{}`.",
+        "# Panics\nPanics if the type parameter `T` is not an implementation type for \
+         #[extern_trait] `{}`.",
         trait_ident
     );
 
