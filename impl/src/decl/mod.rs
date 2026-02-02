@@ -78,9 +78,7 @@ pub fn expand(proxy: Proxy, mut input: ItemTrait) -> Result<TokenStream> {
         }
     }
 
-    input
-        .supertraits
-        .push(parse_quote!(#extern_trait::ExternSafe));
+    input.supertraits.push(parse_quote!(#extern_trait::IntRegRepr));
 
     let macro_ident = format_ident!("__extern_trait_{}", trait_ident);
 
@@ -133,17 +131,17 @@ pub fn expand(proxy: Proxy, mut input: ItemTrait) -> Result<TokenStream> {
 
             /// Convert the proxy type from the implementation type.
             #[doc = #panic_doc]
-            pub fn from_impl<T: #trait_ident + #extern_trait::ExternSafe>(value: T) -> Self {
+            pub fn from_impl<T: #trait_ident + #extern_trait::IntRegRepr>(value: T) -> Self {
                 Self::assert_type_is_impl::<T>();
-                Self(#extern_trait::ExternSafe::into_repr(value))
+                Self(#extern_trait::IntRegRepr::into_repr(value))
             }
 
             /// Convert the proxy type into the implementation type.
             #[doc = #panic_doc]
-            pub fn into_impl<T: #trait_ident + #extern_trait::ExternSafe>(self) -> T {
+            pub fn into_impl<T: #trait_ident + #extern_trait::IntRegRepr>(self) -> T {
                 Self::assert_type_is_impl::<T>();
-                #extern_trait::ExternSafe::from_repr(
-                    #extern_trait::ExternSafe::into_repr(self)
+                #extern_trait::IntRegRepr::from_repr(
+                    #extern_trait::IntRegRepr::into_repr(self)
                 )
             }
 
@@ -230,7 +228,7 @@ fn generate_macro_rules(
 
     let (cast_output, output) = if sig.is_return_self_value() {
         (
-            Some(quote! { #extern_trait::ExternSafe::into_repr }),
+            Some(quote! { #extern_trait::IntRegRepr::into_repr }),
             sig.return_type(parse_quote!(#extern_trait::Repr)),
         )
     } else {

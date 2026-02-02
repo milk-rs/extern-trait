@@ -11,7 +11,7 @@ mod static_impl {
 
     struct RemoteImpl;
 
-    unsafe impl extern_trait::ExternSafe for RemoteImpl {}
+    unsafe impl extern_trait::IntRegRepr for RemoteImpl {}
 
     #[extern_trait]
     impl Static for RemoteImpl {

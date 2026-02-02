@@ -24,7 +24,7 @@ mod resource_impl {
         }
     }
 
-    unsafe impl extern_trait::ExternSafe for ActualResource {}
+    unsafe impl extern_trait::IntRegRepr for ActualResource {}
 
     #[extern_trait]
     impl Resource for ActualResource {

@@ -11,7 +11,7 @@ mod tuple_impl {
 
     struct TupleImpl(u32, u32, u32, u32);
 
-    unsafe impl extern_trait::ExternSafe for TupleImpl {}
+    unsafe impl extern_trait::IntRegRepr for TupleImpl {}
 
     #[extern_trait]
     impl Tuple for TupleImpl {

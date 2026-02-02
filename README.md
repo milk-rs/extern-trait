@@ -3,7 +3,9 @@
 [![Crates.io](https://img.shields.io/crates/v/extern-trait?style=flat-square&logo=rust)](https://crates.io/crates/extern-trait)
 [![docs.rs](https://img.shields.io/docsrs/extern-trait?style=flat-square&logo=docs.rs)](https://docs.rs/extern-trait)
 
-Generate an opaque type for a trait to forward to a foreign implementation.
+Generate proxy types that forward trait method calls across linker boundaries using symbol-based linking.
+
+This enables Rust-to-Rust dynamic dispatch without `dyn` trait objects - useful for OS development and other scenarios where trait implementations live in separate crates that are linked together.
 
 ## Example
 
@@ -27,7 +29,7 @@ v.hello();
 // In crate B
 struct HelloImpl(i32);
 
-unsafe impl extern_trait::ExternSafe for HelloImpl {}
+unsafe impl extern_trait::IntRegRepr for HelloImpl {}
 
 #[extern_trait]
 impl Hello for HelloImpl {
@@ -41,11 +43,9 @@ impl Hello for HelloImpl {
 }
 ```
 
-This will generate the following code (adapted):
-
 <details>
 
-<summary>View code</summary>
+<summary>View generated code</summary>
 
 ```rust
 // In crate A
@@ -59,7 +59,7 @@ pub trait Hello {
 #[repr(transparent)]
 pub(crate) struct HelloProxy(::extern_trait::Repr);
 
-unsafe impl ::extern_trait::ExternSafe for HelloProxy {}
+unsafe impl ::extern_trait::IntRegRepr for HelloProxy {}
 
 impl Hello for HelloProxy {
     fn new(_0: i32) -> Self {
@@ -93,7 +93,7 @@ impl Drop for HelloProxy {
 // In crate B
 struct HelloImpl(i32);
 
-unsafe impl extern_trait::ExternSafe for HelloImpl {}
+unsafe impl extern_trait::IntRegRepr for HelloImpl {}
 
 impl Hello for HelloImpl {
     fn new(num: i32) -> Self {
@@ -115,7 +115,7 @@ const _: () = {
 const _: () = {
     #[unsafe(export_name = "Symbol { ..., trait_name: \"Hello\", ..., name: \"new\" }")]
     fn new(_0: i32) -> ::extern_trait::Repr {
-        ::extern_trait::ExternSafe::into_repr({ <HelloImpl as Hello>::new(_0) })
+        ::extern_trait::IntRegRepr::into_repr({ <HelloImpl as Hello>::new(_0) })
     }
 };
 const _: () = {
@@ -134,40 +134,44 @@ const _: () = {
 
 </details>
 
+## Trait Restrictions
+
+- No generics on the trait itself
+- Only methods allowed (no associated types or constants)
+- Methods must be FFI-compatible: no `const`, `async`, or generic parameters
+- `Self` in signatures must be one of: `Self`, `&Self`, `&mut Self`, `*const Self`, `*mut Self`
+
+## Implementor Requirements
+
+The implementation type must implement [`IntRegRepr`](https://docs.rs/extern-trait/latest/extern_trait/trait.IntRegRepr.html), which requires the type to be passed in **integer registers only** when used in `extern "C"` calls.
+
+Most pointer-like types (references, `Box`, `Arc`, etc.) already implement `IntRegRepr`.
+For custom types, you must `unsafe impl` the trait - see the documentation for details.
+
 ## Supertraits
 
-An `#[extern_trait]` may have supertraits to forward more trait implementations. The currently supported traits are:
-- `Send`/`Sync`
-- `AsRef`
-- *TODO: support more*
+An `#[extern_trait]` can have supertraits, and the macro will automatically forward their implementations to the proxy type.
+
+**Supported supertraits:**
+
+| Marker traits | Standard traits |
+| ------------- | --------------- |
+| `Send`        | `Clone`         |
+| `Sync`        | `Default`       |
+| `Sized`       | `Debug`         |
+| `Unpin`       | `AsRef<T>`      |
+| `Copy`        | `AsMut<T>`      |
 
 ```rust
+use std::fmt::Debug;
 use extern_trait::extern_trait;
 
-#[extern_trait(FooProxy)]
-trait Foo: Send {
-    fn foo();
+#[extern_trait(ResourceProxy)]
+trait Resource: Send + Sync + Clone + Debug {
+    fn new() -> Self;
 }
 ```
 
-## Restrictions
-
-For the trait:
-- It may not have generics.
-- It may only contain methods, not associated types or constants.
-- Its methods have to be compatible with [FFI](https://doc.rust-lang.org/reference/items/external-blocks.html#functions), i.e. no `const`/`async`/type parameters/const parameters
-- If `Self` type appears in any location (including the method receiver), it has to be one of the following forms: **`Self`/`&Self`/`&mut Self`/`*const Self`/`*mut Self`**.
-  - Currently `Self` can not be used as parameter type, but maybe supported in the future.
-
-For the implementor: The type must be able to pass through two general registers in calling conventions. That basically requires the following things:
-- Smaller than two general registers (e.g. **<= 16 bytes** on 64-bit architectures)
-- Do not use floating point registers unless using soft-float ABI
-
-`#[extern_trait]` automatically checked the first requirement, but there are no way to check the second one. So `#[extern_trait]` is required to be **`unsafe`** and implementor must guarantee that their type satisfy all the requirements.
-
-This also require the ABI to be able to pass value in two general registers, so not all architectures and platforms are supported.
-- *TODO: support table*
-
 ## Credits
 
-This crate is heavily inspired by [crate_interface](https://github.com/arceos-org/crate_interface), as the original starting point was to solve the problem that crate_interface cannot pass opaque types.
+This crate is inspired by [crate_interface](https://github.com/arceos-org/crate_interface).

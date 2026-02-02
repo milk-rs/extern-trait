@@ -30,7 +30,7 @@ impl Proxy {
             #[repr(transparent)]
             #vis struct #ident(#extern_trait::Repr);
 
-            unsafe impl #extern_trait::ExternSafe for #ident {}
+            unsafe impl #extern_trait::IntRegRepr for #ident {}
         }
     }
 }

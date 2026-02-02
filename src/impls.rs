@@ -7,12 +7,12 @@ use core::{
     sync::atomic::*,
 };
 
-use super::ExternSafe;
+use super::IntRegRepr;
 
 macro_rules! impl_extern_safe {
     ($($t:ty),*) => {
         $(
-            unsafe impl ExternSafe for $t {}
+            unsafe impl IntRegRepr for $t {}
         )*
     };
 }
@@ -63,18 +63,18 @@ impl_extern_safe!(u128, i128, NonZero<u128>, NonZero<i128>);
 ))]
 impl_extern_safe!(f32, f64);
 
-unsafe impl<T: ?Sized> ExternSafe for *const T {}
-unsafe impl<T: ?Sized> ExternSafe for *mut T {}
-unsafe impl<T: ?Sized> ExternSafe for NonNull<T> {}
-unsafe impl<T: ?Sized> ExternSafe for &T {}
-unsafe impl<T: ?Sized> ExternSafe for &mut T {}
+unsafe impl<T: ?Sized> IntRegRepr for *const T {}
+unsafe impl<T: ?Sized> IntRegRepr for *mut T {}
+unsafe impl<T: ?Sized> IntRegRepr for NonNull<T> {}
+unsafe impl<T: ?Sized> IntRegRepr for &T {}
+unsafe impl<T: ?Sized> IntRegRepr for &mut T {}
 
-unsafe impl<T: ExternSafe> ExternSafe for Pin<T> {}
-unsafe impl<T: ExternSafe> ExternSafe for MaybeUninit<T> {}
+unsafe impl<T: IntRegRepr> IntRegRepr for Pin<T> {}
+unsafe impl<T: IntRegRepr> IntRegRepr for MaybeUninit<T> {}
 
-unsafe impl<T: ExternSafe> ExternSafe for UnsafeCell<T> {}
-unsafe impl<T: ExternSafe> ExternSafe for Cell<T> {}
-unsafe impl<T: ExternSafe> ExternSafe for RefCell<T> {}
+unsafe impl<T: IntRegRepr> IntRegRepr for UnsafeCell<T> {}
+unsafe impl<T: IntRegRepr> IntRegRepr for Cell<T> {}
+unsafe impl<T: IntRegRepr> IntRegRepr for RefCell<T> {}
 
 #[cfg(feature = "alloc")]
 mod alloc_impls {
@@ -88,9 +88,9 @@ mod alloc_impls {
 
     use super::*;
 
-    unsafe impl<T: ?Sized> ExternSafe for Box<T> {}
-    unsafe impl<T: ?Sized> ExternSafe for Rc<T> {}
-    unsafe impl<T: ?Sized> ExternSafe for RcWeak<T> {}
-    unsafe impl<T: ?Sized> ExternSafe for Arc<T> {}
-    unsafe impl<T: ?Sized> ExternSafe for ArcWeak<T> {}
+    unsafe impl<T: ?Sized> IntRegRepr for Box<T> {}
+    unsafe impl<T: ?Sized> IntRegRepr for Rc<T> {}
+    unsafe impl<T: ?Sized> IntRegRepr for RcWeak<T> {}
+    unsafe impl<T: ?Sized> IntRegRepr for Arc<T> {}
+    unsafe impl<T: ?Sized> IntRegRepr for ArcWeak<T> {}
 }

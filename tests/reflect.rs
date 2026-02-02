@@ -5,7 +5,7 @@ trait Any {}
 
 struct AnyImpl(usize);
 
-unsafe impl extern_trait::ExternSafe for AnyImpl {}
+unsafe impl extern_trait::IntRegRepr for AnyImpl {}
 
 #[extern_trait]
 impl Any for AnyImpl {}
