@@ -1,4 +1,3 @@
-mod proxy;
 mod sig;
 mod supertraits;
 mod sym;
@@ -10,10 +9,10 @@ use syn::{
     parse_quote,
 };
 
-use self::{proxy::Proxy, sig::VerifiedSignature, sym::Symbol};
-use crate::attr::extern_trait_path;
+use self::{sig::VerifiedSignature, sym::Symbol};
+use crate::args::DeclArgs;
 
-pub fn expand(proxy: Proxy, mut input: ItemTrait) -> Result<TokenStream> {
+pub fn expand(args: DeclArgs, mut input: ItemTrait) -> Result<TokenStream> {
     if !input.generics.params.is_empty() {
         return Err(Error::new_spanned(
             input.generics,
@@ -21,7 +20,8 @@ pub fn expand(proxy: Proxy, mut input: ItemTrait) -> Result<TokenStream> {
         ));
     }
 
-    let extern_trait = extern_trait_path(&mut input.attrs)?;
+    let extern_trait = args.extern_trait;
+    let proxy = args.proxy;
 
     let unsafety = &input.unsafety;
     let trait_ident = &input.ident;
@@ -78,7 +78,9 @@ pub fn expand(proxy: Proxy, mut input: ItemTrait) -> Result<TokenStream> {
         }
     }
 
-    input.supertraits.push(parse_quote!(#extern_trait::IntRegRepr));
+    input
+        .supertraits
+        .push(parse_quote!(#extern_trait::IntRegRepr));
 
     let macro_ident = format_ident!("__extern_trait_{}", trait_ident);
 

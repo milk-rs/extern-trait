@@ -2,9 +2,9 @@ use proc_macro2::{Span, TokenStream};
 use quote::{quote, quote_spanned};
 use syn::{ItemImpl, Result, spanned::Spanned};
 
-use crate::attr::extern_trait_path;
+use crate::args::ImplArgs;
 
-pub fn expand(mut input: ItemImpl) -> Result<TokenStream> {
+pub fn expand(args: ImplArgs, input: ItemImpl) -> Result<TokenStream> {
     let Some((_, trait_, _)) = &input.trait_ else {
         return Err(syn::Error::new(Span::call_site(), "expected a trait impl"));
     };
@@ -23,8 +23,7 @@ pub fn expand(mut input: ItemImpl) -> Result<TokenStream> {
         ));
     }
 
-    let extern_trait = extern_trait_path(&mut input.attrs)?;
-
+    let extern_trait = args.extern_trait;
     let ty = &input.self_ty;
 
     let assert = quote_spanned! {ty.span()=>

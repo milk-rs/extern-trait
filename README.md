@@ -172,6 +172,39 @@ trait Resource: Send + Sync + Clone + Debug {
 }
 ```
 
+## Re-exporting / Renaming
+
+By default, the macro references `::extern_trait`. If you re-export or rename the crate, use the `crate` attribute to specify the correct path:
+
+```rust
+use ::extern_trait as my_extern_trait;
+
+use my_extern_trait::extern_trait;
+
+// Specify the path when defining a trait
+#[extern_trait(crate = my_extern_trait, MyProxy)]
+trait MyTrait {
+    fn new() -> Self;
+}
+
+struct MyImpl;
+
+unsafe impl my_extern_trait::IntRegRepr for MyImpl {}
+
+// Also specify the path when implementing
+#[extern_trait(crate = my_extern_trait)]
+impl MyTrait for MyImpl {
+    fn new() -> Self { MyImpl }
+}
+```
+
+This is also necessary if you rename the dependency in `Cargo.toml`:
+
+```toml
+[dependencies]
+my_extern_trait = { package = "extern-trait", version = "..." }
+```
+
 ## Credits
 
 This crate is inspired by [crate_interface](https://github.com/arceos-org/crate_interface).
