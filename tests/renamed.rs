@@ -8,8 +8,6 @@ trait Renamed {
 
 struct RenamedImpl(i32);
 
-unsafe impl my_extern_trait::IntRegRepr for RenamedImpl {}
-
 #[extern_trait(crate = my_extern_trait)]
 impl Renamed for RenamedImpl {
     fn value(&self) -> i32 {

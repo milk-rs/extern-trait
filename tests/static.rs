@@ -11,8 +11,6 @@ mod static_impl {
 
     struct RemoteImpl;
 
-    unsafe impl extern_trait::IntRegRepr for RemoteImpl {}
-
     #[extern_trait]
     impl Static for RemoteImpl {
         fn add(a: i32, b: i32) -> i32 {

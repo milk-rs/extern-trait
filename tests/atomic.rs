@@ -14,8 +14,6 @@ mod atomic_impl {
 
     struct AtomicImpl(AtomicI32);
 
-    unsafe impl extern_trait::IntRegRepr for AtomicImpl {}
-
     #[extern_trait]
     impl Atomic for AtomicImpl {
         fn new(v: i32) -> Self {

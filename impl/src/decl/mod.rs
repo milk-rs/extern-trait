@@ -12,7 +12,7 @@ use syn::{
 use self::{sig::VerifiedSignature, sym::Symbol};
 use crate::args::DeclArgs;
 
-pub fn expand(args: DeclArgs, mut input: ItemTrait) -> Result<TokenStream> {
+pub fn expand(args: DeclArgs, input: ItemTrait) -> Result<TokenStream> {
     if !input.generics.params.is_empty() {
         return Err(Error::new_spanned(
             input.generics,
@@ -78,10 +78,6 @@ pub fn expand(args: DeclArgs, mut input: ItemTrait) -> Result<TokenStream> {
         }
     }
 
-    input
-        .supertraits
-        .push(parse_quote!(#extern_trait::IntRegRepr));
-
     let macro_ident = format_ident!("__extern_trait_{}", trait_ident);
 
     let drop_name = format!("{:?}", sym.clone().with_name("drop"));
@@ -133,17 +129,17 @@ pub fn expand(args: DeclArgs, mut input: ItemTrait) -> Result<TokenStream> {
 
             /// Convert the proxy type from the implementation type.
             #[doc = #panic_doc]
-            pub fn from_impl<T: #trait_ident + #extern_trait::IntRegRepr>(value: T) -> Self {
+            pub fn from_impl<T: #trait_ident>(value: T) -> Self {
                 Self::assert_type_is_impl::<T>();
-                Self(#extern_trait::IntRegRepr::into_repr(value))
+                Self(#extern_trait::Repr::from_value(value))
             }
 
             /// Convert the proxy type into the implementation type.
             #[doc = #panic_doc]
-            pub fn into_impl<T: #trait_ident + #extern_trait::IntRegRepr>(self) -> T {
+            pub fn into_impl<T: #trait_ident>(self) -> T {
                 Self::assert_type_is_impl::<T>();
-                #extern_trait::IntRegRepr::from_repr(
-                    #extern_trait::IntRegRepr::into_repr(self)
+                #extern_trait::Repr::into_value(
+                    #extern_trait::Repr::from_value(self)
                 )
             }
 
@@ -230,7 +226,7 @@ fn generate_macro_rules(
 
     let (cast_output, output) = if sig.is_return_self_value() {
         (
-            Some(quote! { #extern_trait::IntRegRepr::into_repr }),
+            Some(quote! { #extern_trait::Repr::from_value }),
             sig.return_type(parse_quote!(#extern_trait::Repr)),
         )
     } else {

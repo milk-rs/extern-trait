@@ -72,8 +72,6 @@ impl Proxy {
             #(#attrs)*
             #[repr(transparent)]
             #vis struct #ident(#extern_trait::Repr);
-
-            unsafe impl #extern_trait::IntRegRepr for #ident {}
         }
     }
 }

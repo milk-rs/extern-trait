@@ -5,13 +5,43 @@
 
 Generate proxy types that forward trait method calls across linker boundaries using symbol-based linking.
 
-This enables Rust-to-Rust dynamic dispatch without `dyn` trait objects - useful for OS development and other scenarios where trait implementations live in separate crates that are linked together.
+## Motivation
+
+In modular systems like OS kernels, a common pattern emerges: crate A needs to call functionality that crate B provides, but A cannot depend on B (to avoid circular dependencies or to keep A generic). Examples include:
+
+- A logging crate that needs platform-specific console output
+- A filesystem crate that needs a block device driver
+- A scheduler that needs architecture-specific context switching
+
+The traditional solution is `Box<dyn Trait>`, but this has drawbacks:
+
+- **Heap allocation** for every trait object
+- **Vtable indirection** on every method call
+- **Runtime overhead** that may be unacceptable in performance-critical code
+
+`#[extern_trait]` solves this by acting as a **static vtable** - method calls are resolved at link time rather than runtime, with zero heap allocation and no pointer indirection.
+
+## How it Works
+
+1. **Proxy generation**: The macro creates a fixed-size proxy struct that stores the implementation value inline
+2. **Symbol export**: Each trait method is exported as a linker symbol from the implementation crate
+3. **Symbol linking**: The proxy calls these symbols, which the linker resolves to the actual implementation
+
+Think of it as compile-time monomorphization deferred to link time.
+
+The proxy uses a fixed-size representation:
+
+```rust
+#[repr(C)]
+struct Repr(*const (), *const ());
+```
+
+This is two pointers in size (16 bytes on 64-bit, 8 bytes on 32-bit), storing the implementation value directly - no heap allocation or pointer indirection is added by the macro.
 
 ## Example
 
 ```rust
 # use extern_trait::extern_trait;
-
 // In crate A
 /// A Hello trait.
 #[extern_trait(
@@ -28,8 +58,6 @@ v.hello();
 
 // In crate B
 struct HelloImpl(i32);
-
-unsafe impl extern_trait::IntRegRepr for HelloImpl {}
 
 #[extern_trait]
 impl Hello for HelloImpl {
@@ -58,8 +86,6 @@ pub trait Hello {
 /// A proxy type for [`Hello`].
 #[repr(transparent)]
 pub(crate) struct HelloProxy(::extern_trait::Repr);
-
-unsafe impl ::extern_trait::IntRegRepr for HelloProxy {}
 
 impl Hello for HelloProxy {
     fn new(_0: i32) -> Self {
@@ -93,8 +119,6 @@ impl Drop for HelloProxy {
 // In crate B
 struct HelloImpl(i32);
 
-unsafe impl extern_trait::IntRegRepr for HelloImpl {}
-
 impl Hello for HelloImpl {
     fn new(num: i32) -> Self {
         Self(num)
@@ -107,7 +131,7 @@ impl Hello for HelloImpl {
 
 const _: () = {
     assert!(
-        ::core::mem::size_of::<HelloImpl>() <= ::core::mem::size_of::<::extern_trait::Repr>() * 2,
+        ::core::mem::size_of::<HelloImpl>() <= ::core::mem::size_of::<::extern_trait::Repr>(),
         "HelloImpl is too large to be used with #[extern_trait]"
     );
 };
@@ -115,13 +139,13 @@ const _: () = {
 const _: () = {
     #[unsafe(export_name = "Symbol { ..., trait_name: \"Hello\", ..., name: \"new\" }")]
     fn new(_0: i32) -> ::extern_trait::Repr {
-        ::extern_trait::IntRegRepr::into_repr({ <HelloImpl as Hello>::new(_0) })
+        ::extern_trait::Repr::from_value(<HelloImpl as Hello>::new(_0))
     }
 };
 const _: () = {
     #[unsafe(export_name = "Symbol { ..., trait_name: \"Hello\", ..., name: \"hello\" }")]
     fn hello(_0: &HelloImpl) {
-        ({ <HelloImpl as Hello>::hello(_0) })
+        <HelloImpl as Hello>::hello(_0)
     }
 };
 const _: () = {
@@ -141,12 +165,22 @@ const _: () = {
 - Methods must be FFI-compatible: no `const`, `async`, or generic parameters
 - `Self` in signatures must be one of: `Self`, `&Self`, `&mut Self`, `*const Self`, `*mut Self`
 
-## Implementor Requirements
+## Size Constraint
 
-The implementation type must implement [`IntRegRepr`](https://docs.rs/extern-trait/latest/extern_trait/trait.IntRegRepr.html), which requires the type to be passed in **integer registers only** when used in `extern "C"` calls.
+The implementation type must fit within `Repr`, which is two pointers in size:
 
-Most pointer-like types (references, `Box`, `Arc`, etc.) already implement `IntRegRepr`.
-For custom types, you must `unsafe impl` the trait - see the documentation for details.
+| Platform | `Repr` size | Max impl size |
+| -------- | ----------- | ------------- |
+| 64-bit   | 16 bytes    | 16 bytes      |
+| 32-bit   | 8 bytes     | 8 bytes       |
+
+This constraint is checked at compile time. Types that fit include:
+
+- Pointer-sized types: `Box<T>`, `Arc<T>`, `&T`, `*const T`
+- Small structs: up to two `usize` fields
+- Primitives: integers, floats, bools
+
+For larger types, wrap them in `Box`.
 
 ## Supertraits
 
@@ -188,8 +222,6 @@ trait MyTrait {
 }
 
 struct MyImpl;
-
-unsafe impl my_extern_trait::IntRegRepr for MyImpl {}
 
 // Also specify the path when implementing
 #[extern_trait(crate = my_extern_trait)]

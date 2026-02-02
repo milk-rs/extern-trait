@@ -29,7 +29,7 @@ pub fn expand(args: ImplArgs, input: ItemImpl) -> Result<TokenStream> {
     let assert = quote_spanned! {ty.span()=>
         const _: () = {
             assert!(
-                ::core::mem::size_of::<#ty>() <= ::core::mem::size_of::<#extern_trait::Repr>() * 2,
+                ::core::mem::size_of::<#ty>() <= ::core::mem::size_of::<#extern_trait::Repr>(),
                 concat!(stringify!(#ty), " is too large to be used with #[extern_trait]")
             );
         };
