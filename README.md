@@ -237,6 +237,39 @@ This is also necessary if you rename the dependency in `Cargo.toml`:
 my_extern_trait = { package = "extern-trait", version = "..." }
 ```
 
+## Internals
+
+### Why Two Pointers?
+
+The `Repr` type is two pointers in size based on a key observation: **most calling conventions pass structs up to two registers by value in registers, not on the stack**.
+
+On x86_64, ARM64, RISC-V, and other common architectures, a two-pointer struct is passed and returned in two registers (e.g., `rdi`+`rsi`/`rax`+`rdx` on x86_64, `x0`+`x1` on ARM64). This means:
+
+- **No memory traffic**: Values stay in registers across function calls
+- **Zero-cost conversion**: `Repr::from_value` and `Repr::into_value` compile to nothing
+
+For example, on x86_64:
+
+```asm
+; from_value<Box<T>> - the Box pointer is already in rdi, just move to rax
+mov     rax, rdi
+ret
+```
+
+On architectures that don't pass two-pointer structs in registers, this still works correctly - just with a small memory copy instead of pure register operations. The design prioritizes the common case while remaining portable.
+
+### What Fits in `Repr`?
+
+| Type                          | Size (64-bit) | Fits?         |
+| ----------------------------- | ------------- | ------------- |
+| `Box<T>`, `Arc<T>`, `Rc<T>`   | 8 bytes       | ✓             |
+| `&T`, `*const T`              | 8 bytes       | ✓             |
+| `(usize, usize)`              | 16 bytes      | ✓             |
+| `&[T]`, `&str` (fat pointers) | 16 bytes      | ✓             |
+| `String`, `Vec<T>`            | 24 bytes      | ✗ (use `Box`) |
+
+Two pointers is the sweet spot: it covers fat pointers, smart pointers, and small structs - the types you'd typically use to implement a trait.
+
 ## Credits
 
 This crate is inspired by [crate_interface](https://github.com/arceos-org/crate_interface).
