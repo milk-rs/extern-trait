@@ -8,7 +8,7 @@ Generate an opaque type for a trait to forward to a foreign implementation.
 ## Example
 
 ```rust
-# use extern_trait::{ExternSafe, extern_trait};
+# use extern_trait::extern_trait;
 
 // In crate A
 /// A Hello trait.
@@ -27,7 +27,7 @@ v.hello();
 // In crate B
 struct HelloImpl(i32);
 
-unsafe impl ExternSafe for HelloImpl {}
+unsafe impl extern_trait::ExternSafe for HelloImpl {}
 
 #[extern_trait]
 impl Hello for HelloImpl {
@@ -56,7 +56,10 @@ pub trait Hello {
 }
 
 /// A proxy type for [`Hello`].
-pub(crate) struct HelloProxy(*const (), *const ());
+#[repr(transparent)]
+pub(crate) struct HelloProxy(::extern_trait::Repr);
+
+unsafe impl ::extern_trait::ExternSafe for HelloProxy {}
 
 impl Hello for HelloProxy {
     fn new(_0: i32) -> Self {
@@ -90,7 +93,8 @@ impl Drop for HelloProxy {
 // In crate B
 struct HelloImpl(i32);
 
-// #[extern_trait]
+unsafe impl extern_trait::ExternSafe for HelloImpl {}
+
 impl Hello for HelloImpl {
     fn new(num: i32) -> Self {
         Self(num)
@@ -103,22 +107,26 @@ impl Hello for HelloImpl {
 
 const _: () = {
     assert!(
-        ::core::mem::size_of::<HelloImpl>() <= ::core::mem::size_of::<usize>() * 2,
-        concat!(stringify!(HelloImpl), " is too large to be used with #[extern_trait]")
+        ::core::mem::size_of::<HelloImpl>() <= ::core::mem::size_of::<::extern_trait::Repr>() * 2,
+        "HelloImpl is too large to be used with #[extern_trait]"
     );
 };
 
 const _: () = {
     #[unsafe(export_name = "Symbol { ..., trait_name: \"Hello\", ..., name: \"new\" }")]
-    unsafe extern "Rust" fn new(_0: i32) -> HelloImpl {
-        { <HelloImpl as Hello>::new(_0) }
+    fn new(_0: i32) -> ::extern_trait::Repr {
+        ::extern_trait::ExternSafe::into_repr({ <HelloImpl as Hello>::new(_0) })
     }
+};
+const _: () = {
     #[unsafe(export_name = "Symbol { ..., trait_name: \"Hello\", ..., name: \"hello\" }")]
-    unsafe extern "Rust" fn hello(_0: &HelloImpl) {
-        { <HelloImpl as Hello>::hello(_0) }
+    fn hello(_0: &HelloImpl) {
+        ({ <HelloImpl as Hello>::hello(_0) })
     }
+};
+const _: () = {
     #[unsafe(export_name = "Symbol { ..., trait_name: \"Hello\", ..., name: \"drop\" }")]
-    unsafe extern "Rust" fn drop(this: &mut HelloImpl) {
+    unsafe fn drop(this: &mut HelloImpl) {
         unsafe { ::core::ptr::drop_in_place(this) };
     }
 };

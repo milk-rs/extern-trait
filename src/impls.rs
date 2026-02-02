@@ -69,17 +69,12 @@ unsafe impl<T: ?Sized> ExternSafe for NonNull<T> {}
 unsafe impl<T: ?Sized> ExternSafe for &T {}
 unsafe impl<T: ?Sized> ExternSafe for &mut T {}
 
-unsafe impl<T: ExternSafe, const N: usize> ExternSafe for [T; N] {}
-unsafe impl<T: ExternSafe> ExternSafe for [T] {}
-
 unsafe impl<T: ExternSafe> ExternSafe for Pin<T> {}
 unsafe impl<T: ExternSafe> ExternSafe for MaybeUninit<T> {}
-unsafe impl<T: ExternSafe> ExternSafe for Option<T> {}
-unsafe impl<T: ExternSafe, E: ExternSafe> ExternSafe for Result<T, E> {}
 
-unsafe impl<T: ExternSafe + ?Sized> ExternSafe for UnsafeCell<T> {}
-unsafe impl<T: ExternSafe + ?Sized> ExternSafe for Cell<T> {}
-unsafe impl<T: ExternSafe + ?Sized> ExternSafe for RefCell<T> {}
+unsafe impl<T: ExternSafe> ExternSafe for UnsafeCell<T> {}
+unsafe impl<T: ExternSafe> ExternSafe for Cell<T> {}
+unsafe impl<T: ExternSafe> ExternSafe for RefCell<T> {}
 
 #[cfg(feature = "alloc")]
 mod alloc_impls {
@@ -87,11 +82,8 @@ mod alloc_impls {
 
     use alloc::{
         boxed::Box,
-        collections::{BTreeMap, BTreeSet, BinaryHeap, LinkedList, VecDeque},
         rc::{Rc, Weak as RcWeak},
-        string::String,
         sync::{Arc, Weak as ArcWeak},
-        vec::Vec,
     };
 
     use super::*;
@@ -101,14 +93,4 @@ mod alloc_impls {
     unsafe impl<T: ?Sized> ExternSafe for RcWeak<T> {}
     unsafe impl<T: ?Sized> ExternSafe for Arc<T> {}
     unsafe impl<T: ?Sized> ExternSafe for ArcWeak<T> {}
-
-    // Note: impls below are actually useless; They exceed the size limit.
-    // Keep them here for reducing compiler errors when users try to use these types.
-    unsafe impl ExternSafe for String {}
-    unsafe impl<T> ExternSafe for Vec<T> {}
-    unsafe impl<T> ExternSafe for VecDeque<T> {}
-    unsafe impl<T> ExternSafe for LinkedList<T> {}
-    unsafe impl<T> ExternSafe for BTreeSet<T> {}
-    unsafe impl<K, V> ExternSafe for BTreeMap<K, V> {}
-    unsafe impl<T> ExternSafe for BinaryHeap<T> {}
 }

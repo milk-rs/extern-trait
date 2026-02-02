@@ -1,7 +1,7 @@
 use extern_trait::extern_trait;
 
 #[extern_trait(AnyProxy)]
-trait Any: 'static {}
+trait Any {}
 
 struct AnyImpl(usize);
 

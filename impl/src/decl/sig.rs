@@ -1,14 +1,12 @@
 use proc_macro2::TokenStream;
 use quote::{ToTokens, format_ident, quote};
 use syn::{
-    Attribute, Error, FnArg, GenericArgument, Ident, Lifetime, LitStr, PathArguments, Result,
-    ReturnType, Signature, Token, Type, TypePtr, TypeReference, parse_quote,
+    Abi, Error, FnArg, GenericArgument, Ident, Lifetime, PathArguments, Result, ReturnType,
+    Signature, Token, Type, TypePtr, TypeReference, parse_quote,
 };
 
-use crate::attr::parse_extern_trait_attr;
-
 #[derive(Debug, Clone)]
-enum SelfKind {
+pub enum SelfKind {
     Value,
     Ptr {
         star_token: Token![*],
@@ -50,7 +48,7 @@ impl SelfKind {
     }
 }
 
-trait TypeExt {
+pub trait TypeExt {
     fn contains_self(&self) -> bool;
     fn self_kind(&self) -> Option<SelfKind>;
 }
@@ -170,7 +168,7 @@ impl TypeExt for Type {
 }
 
 #[derive(Debug, Clone)]
-enum MaybeSelf {
+pub enum MaybeSelf {
     Self_(SelfKind),
     Typed(Box<Type>),
 }
@@ -184,72 +182,17 @@ impl MaybeSelf {
     }
 }
 
-#[derive(Debug, Default, Clone)]
-pub enum ExternAbi {
-    #[default]
-    Rust,
-    C,
-}
-
-impl ExternAbi {
-    // #[extern_trait(abi = "ABI")]
-    fn from_attrs(attrs: &mut Vec<Attribute>) -> Result<Self> {
-        let mut abi = None;
-
-        parse_extern_trait_attr(attrs, |meta| {
-            if meta.path.is_ident("abi") {
-                if abi.is_some() {
-                    return Err(meta.error("duplicate extern_trait abi attribute"));
-                }
-                let value: LitStr = meta.value()?.parse()?;
-                match value.value().as_str() {
-                    "Rust" => abi = Some(ExternAbi::Rust),
-                    "C" => abi = Some(ExternAbi::C),
-                    _ => {
-                        return Err(
-                            meta.error("unsupported extern_trait abi, expected `Rust` or `C`")
-                        );
-                    }
-                }
-                Ok(())
-            } else {
-                Err(meta.error("unsupported extern_trait attribute"))
-            }
-        })?;
-
-        Ok(abi.unwrap_or_default())
-    }
-}
-
-impl ToTokens for ExternAbi {
-    fn to_tokens(&self, tokens: &mut TokenStream) {
-        tokens.extend(match self {
-            ExternAbi::Rust => {
-                quote! { extern "Rust" }
-            }
-            ExternAbi::C => {
-                quote! { extern "C" }
-            }
-        });
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct VerifiedSignature {
-    pub abi: ExternAbi,
     pub unsafety: Option<Token![unsafe]>,
+    pub abi: Option<Abi>,
     pub ident: Ident,
     inputs: Vec<MaybeSelf>,
     output: Option<MaybeSelf>,
 }
 
 impl VerifiedSignature {
-    pub fn try_new(attrs: Option<&mut Vec<Attribute>>, sig: &Signature) -> Result<Self> {
-        let abi = attrs
-            .map(ExternAbi::from_attrs)
-            .transpose()?
-            .unwrap_or_default();
-
+    pub fn try_new(sig: &Signature) -> Result<Self> {
         if sig.constness.is_some() {
             return Err(Error::new_spanned(
                 sig.constness,
@@ -266,6 +209,12 @@ impl VerifiedSignature {
             return Err(Error::new_spanned(
                 &sig.generics,
                 "#[extern_trait] does not support generic functions",
+            ));
+        }
+        if sig.generics.where_clause.is_some() {
+            return Err(Error::new_spanned(
+                &sig.generics.where_clause,
+                "#[extern_trait] does not support where clauses",
             ));
         }
         if sig.variadic.is_some() {
@@ -321,8 +270,8 @@ impl VerifiedSignature {
         };
 
         Ok(Self {
-            abi,
             unsafety: sig.unsafety,
+            abi: sig.abi.clone(),
             ident: sig.ident.clone(),
             inputs,
             output,
@@ -349,6 +298,10 @@ impl VerifiedSignature {
             .map(move |arg| arg.to_type(self_type.clone()))
     }
 
+    pub fn is_return_self_value(&self) -> bool {
+        matches!(self.output, Some(MaybeSelf::Self_(SelfKind::Value)))
+    }
+
     pub fn return_type(&self, self_type: Box<Type>) -> ReturnType {
         match &self.output {
             None => ReturnType::Default,
@@ -360,13 +313,14 @@ impl VerifiedSignature {
 impl ToTokens for VerifiedSignature {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         let unsafety = &self.unsafety;
+        let abi = &self.abi;
         let ident = &self.ident;
         let arg_names = self.arg_names();
         let arg_types = self.arg_types(parse_quote!(Self));
         let output = self.return_type(parse_quote!(Self));
 
         tokens.extend(quote! {
-            #unsafety fn #ident(#(#arg_names: #arg_types),*) #output
+            #unsafety #abi fn #ident(#(#arg_names: #arg_types),*) #output
         });
     }
 }

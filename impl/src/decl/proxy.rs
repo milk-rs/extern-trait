@@ -1,7 +1,7 @@
 use proc_macro2::TokenStream;
-use quote::{ToTokens, TokenStreamExt, quote};
+use quote::quote;
 use syn::{
-    Attribute, Ident, Result, Visibility,
+    Attribute, Ident, Path, Result, Visibility,
     parse::{Parse, ParseStream},
 };
 
@@ -21,14 +21,16 @@ impl Parse for Proxy {
     }
 }
 
-impl ToTokens for Proxy {
-    fn to_tokens(&self, tokens: &mut TokenStream) {
+impl Proxy {
+    pub fn expand(&self, extern_trait: &Path) -> TokenStream {
         let Proxy { attrs, vis, ident } = self;
 
-        tokens.append_all(quote! {
+        quote! {
             #(#attrs)*
-            #[repr(C)]
-            #vis struct #ident(*const (), *const ());
-        });
+            #[repr(transparent)]
+            #vis struct #ident(#extern_trait::Repr);
+
+            unsafe impl #extern_trait::ExternSafe for #ident {}
+        }
     }
 }

@@ -2,7 +2,7 @@ use std::{cell::LazyCell, collections::BTreeMap};
 
 use proc_macro2::TokenStream;
 use quote::{ToTokens, quote};
-use syn::{Ident, PathArguments, PathSegment, Signature, TraitItemFn, parse_quote};
+use syn::{Ident, Path, PathArguments, PathSegment, Signature, TraitItemFn, parse_quote};
 
 use super::{sig::VerifiedSignature, sym::Symbol};
 
@@ -27,7 +27,7 @@ macro_rules! supertrait {
             functions: vec![
                 $({
                     let item: TraitItemFn = parse_quote!($f);
-                    VerifiedSignature::try_new(None, &item.sig).unwrap()
+                    VerifiedSignature::try_new(&item.sig).unwrap()
                 },)*
             ],
         }
@@ -71,6 +71,7 @@ const TRAITS: LazyCell<Vec<SuperTraitInfo>> = LazyCell::new(|| {
 });
 
 pub fn generate_impl(
+    extern_trait: &Path,
     path: &PathSegment,
     proxy_ident: &Ident,
     sym: &Symbol,
@@ -111,7 +112,7 @@ pub fn generate_impl(
             let sig = replace_map
                 .iter()
                 .fold(sig, |acc, (k, v)| acc.replace(k, v));
-            VerifiedSignature::try_new(None, &syn::parse_str::<Signature>(&sig).unwrap()).unwrap()
+            VerifiedSignature::try_new(&syn::parse_str::<Signature>(&sig).unwrap()).unwrap()
         })
         .collect::<Vec<_>>();
 
@@ -129,7 +130,7 @@ pub fn generate_impl(
             sym.clone()
                 .with_name(format!("{}::{}", path.to_token_stream(), sig.ident))
         );
-        super::generate_macro_rules(Some(quote!(#path)), &export_name, sig)
+        super::generate_macro_rules(extern_trait, Some(quote!(#path)), &export_name, sig)
     });
 
     Some((

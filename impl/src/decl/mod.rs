@@ -6,7 +6,7 @@ mod sym;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::{
-    Error, Ident, ItemTrait, Result, TraitBoundModifier, TraitItem, Type, TypeParamBound,
+    Error, Ident, ItemTrait, Path, Result, TraitBoundModifier, TraitItem, Type, TypeParamBound,
     parse_quote,
 };
 
@@ -32,7 +32,7 @@ pub fn expand(proxy: Proxy, mut input: ItemTrait) -> Result<TokenStream> {
     let mut impl_content = TokenStream::new();
     let mut macro_content = TokenStream::new();
 
-    for t in &mut input.items {
+    for t in &input.items {
         let TraitItem::Fn(f) = t else {
             impl_content.extend(
                 Error::new_spanned(t, "#[extern_trait] may only contain methods")
@@ -43,10 +43,15 @@ pub fn expand(proxy: Proxy, mut input: ItemTrait) -> Result<TokenStream> {
 
         let export_name = format!("{:?}", sym.clone().with_name(f.sig.ident.to_string()));
 
-        match VerifiedSignature::try_new(Some(&mut f.attrs), &f.sig) {
+        match VerifiedSignature::try_new(&f.sig) {
             Ok(sig) => {
                 impl_content.extend(generate_proxy_impl(proxy_ident, &export_name, &sig));
-                macro_content.extend(generate_macro_rules(None, &export_name, &sig));
+                macro_content.extend(generate_macro_rules(
+                    &extern_trait,
+                    None,
+                    &export_name,
+                    &sig,
+                ));
             }
             Err(e) => {
                 impl_content.extend(e.to_compile_error());
@@ -65,13 +70,17 @@ pub fn expand(proxy: Proxy, mut input: ItemTrait) -> Result<TokenStream> {
         {
             let t = &t.path.segments[0];
             if let Some((impl_block, macro_rules)) =
-                supertraits::generate_impl(t, proxy_ident, &sym)
+                supertraits::generate_impl(&extern_trait, t, proxy_ident, &sym)
             {
                 super_impls.extend(impl_block);
                 macro_content.extend(macro_rules);
             }
         }
     }
+
+    input
+        .supertraits
+        .push(parse_quote!(#extern_trait::ExternSafe));
 
     let macro_ident = format_ident!("__extern_trait_{}", trait_ident);
 
@@ -84,12 +93,12 @@ pub fn expand(proxy: Proxy, mut input: ItemTrait) -> Result<TokenStream> {
         trait_ident
     );
 
+    let proxy = proxy.expand(&extern_trait);
+
     Ok(quote! {
         #input
 
         #proxy
-
-        unsafe impl #extern_trait::ExternSafe for #proxy_ident {}
 
         #unsafety impl #trait_ident for #proxy_ident {
             #impl_content
@@ -108,15 +117,6 @@ pub fn expand(proxy: Proxy, mut input: ItemTrait) -> Result<TokenStream> {
         }
 
         impl #proxy_ident {
-            unsafe fn transmute<T, R>() -> fn(T) -> R {
-                fn transmute(this: #proxy_ident) -> #proxy_ident {
-                    this
-                }
-                unsafe {
-                    ::core::mem::transmute::<_, fn(T) -> R>(transmute as *const ())
-                }
-            }
-
             fn assert_type_is_impl<T: #trait_ident>() {
                 unsafe extern "Rust" {
                     #[link_name = #typeid_name]
@@ -133,16 +133,18 @@ pub fn expand(proxy: Proxy, mut input: ItemTrait) -> Result<TokenStream> {
 
             /// Convert the proxy type from the implementation type.
             #[doc = #panic_doc]
-            pub fn from_impl<T: #trait_ident>(value: T) -> Self {
+            pub fn from_impl<T: #trait_ident + #extern_trait::ExternSafe>(value: T) -> Self {
                 Self::assert_type_is_impl::<T>();
-                unsafe { Self::transmute::<T, #proxy_ident>()(value) }
+                Self(#extern_trait::ExternSafe::into_repr(value))
             }
 
             /// Convert the proxy type into the implementation type.
             #[doc = #panic_doc]
-            pub fn into_impl<T: #trait_ident>(self) -> T {
+            pub fn into_impl<T: #trait_ident + #extern_trait::ExternSafe>(self) -> T {
                 Self::assert_type_is_impl::<T>();
-                unsafe { Self::transmute::<#proxy_ident, T>()(self) }
+                #extern_trait::ExternSafe::from_repr(
+                    #extern_trait::ExternSafe::into_repr(self)
+                )
             }
 
             /// Returns a reference to the implementation type.
@@ -168,7 +170,7 @@ pub fn expand(proxy: Proxy, mut input: ItemTrait) -> Result<TokenStream> {
 
                 const _: () = {
                     #[unsafe(export_name = #drop_name)]
-                    unsafe extern "Rust" fn drop(this: &mut $ty) {
+                    unsafe fn drop(this: &mut $ty) {
                         unsafe { ::core::ptr::drop_in_place(this) };
                     }
 
@@ -189,8 +191,8 @@ fn generate_proxy_impl(
     export_name: &str,
     sig: &VerifiedSignature,
 ) -> TokenStream {
-    let abi = &sig.abi;
     let unsafety = sig.unsafety;
+    let abi = &sig.abi;
     let ident = &sig.ident;
 
     let proxy: Box<Type> = parse_quote!(#proxy_ident);
@@ -200,8 +202,8 @@ fn generate_proxy_impl(
     let output = sig.return_type(proxy.clone());
 
     quote! {
-        #unsafety fn #ident(#(#arg_names: #arg_types),*) #output {
-            unsafe #abi {
+        #unsafety #abi fn #ident(#(#arg_names: #arg_types),*) #output {
+            unsafe extern "Rust" {
                 #[link_name = #export_name]
                 unsafe fn #ident(#(_: #arg_types),*) #output;
             }
@@ -213,11 +215,11 @@ fn generate_proxy_impl(
 }
 
 fn generate_macro_rules(
+    extern_trait: &Path,
     trait_: Option<TokenStream>,
     export_name: &str,
     sig: &VerifiedSignature,
 ) -> TokenStream {
-    let abi = &sig.abi;
     let unsafety = sig.unsafety;
     let ident = &sig.ident;
 
@@ -225,17 +227,27 @@ fn generate_macro_rules(
 
     let arg_names = sig.arg_names_no_self().collect::<Vec<_>>();
     let arg_types = sig.arg_types(placeholder.clone()).collect::<Vec<_>>();
-    let output = sig.return_type(placeholder.clone());
+
+    let (cast_output, output) = if sig.is_return_self_value() {
+        (
+            Some(quote! { #extern_trait::ExternSafe::into_repr }),
+            sig.return_type(parse_quote!(#extern_trait::Repr)),
+        )
+    } else {
+        (None, sig.return_type(placeholder.clone()))
+    };
 
     let trait_name = trait_.unwrap_or_else(|| quote!($trait));
 
     quote! {
         const _: () = {
             #[unsafe(export_name = #export_name)]
-            #abi fn #ident(#(#arg_names: #arg_types),*) #output {
-                #unsafety {
-                    <$ty as #trait_name>::#ident(#(#arg_names),*)
-                }
+            fn #ident(#(#arg_names: #arg_types),*) #output {
+                #cast_output(
+                    #unsafety {
+                       <$ty as #trait_name>::#ident(#(#arg_names),*)
+                    }
+                )
             }
         };
     }
