@@ -5,8 +5,8 @@ mod sym;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::{
-    Error, Ident, ItemTrait, Path, Result, TraitBoundModifier, TraitItem, Type, TypeParamBound,
-    parse_quote,
+    Error, Ident, ItemTrait, Path, Result, ReturnType, TraitBoundModifier, TraitItem, Type,
+    TypeParamBound, parse_quote,
 };
 
 use self::{sig::VerifiedSignature, sym::Symbol};
@@ -194,8 +194,15 @@ fn generate_proxy_impl(
     let proxy: Box<Type> = parse_quote!(#proxy_ident);
 
     let arg_names = sig.arg_names().collect::<Vec<_>>();
-    let arg_types = sig.arg_types(proxy.clone()).collect::<Vec<_>>();
-    let output = sig.return_type(proxy.clone());
+    let arg_types = sig
+        .inputs
+        .iter()
+        .map(|input| input.to_type(proxy.clone()))
+        .collect::<Vec<_>>();
+    let output = match &sig.output {
+        None => ReturnType::Default,
+        Some(output) => ReturnType::Type(parse_quote!(->), output.to_type(proxy.clone())),
+    };
 
     quote! {
         #unsafety #abi fn #ident(#(#arg_names: #arg_types),*) #output {
@@ -219,18 +226,52 @@ fn generate_macro_rules(
     let unsafety = sig.unsafety;
     let ident = &sig.ident;
 
-    let placeholder = Box::new(Type::Verbatim(quote!($ty)));
+    let placeholder: Box<Type> = Box::new(Type::Verbatim(quote!($ty)));
+    let repr_type: Box<Type> = parse_quote!(#extern_trait::Repr);
 
-    let arg_names = sig.arg_names_no_self().collect::<Vec<_>>();
-    let arg_types = sig.arg_types(placeholder.clone()).collect::<Vec<_>>();
+    // Generate arg names: _0, _1, _2, ...
+    let arg_names = (0..sig.inputs.len())
+        .map(|i| format_ident!("_{}", i))
+        .collect::<Vec<_>>();
 
-    let (cast_output, output) = if sig.is_return_self_value() {
-        (
+    // For by-value Self parameters, use Repr as the extern function parameter type
+    let arg_types = sig
+        .inputs
+        .iter()
+        .map(|input| {
+            if input.is_self_value() {
+                repr_type.clone()
+            } else {
+                input.to_type(placeholder.clone())
+            }
+        })
+        .collect::<Vec<_>>();
+
+    // For by-value Self parameters, convert from Repr to $ty
+    let call_args = sig
+        .inputs
+        .iter()
+        .zip(&arg_names)
+        .map(|(input, name)| {
+            if input.is_self_value() {
+                quote!(#extern_trait::Repr::into_value::<$ty>(#name))
+            } else {
+                quote!(#name)
+            }
+        })
+        .collect::<Vec<_>>();
+
+    // For by-value Self return, wrap result in Repr::from_value and use Repr as return type
+    let (cast_output, output) = match &sig.output {
+        Some(output) if output.is_self_value() => (
             Some(quote! { #extern_trait::Repr::from_value }),
-            sig.return_type(parse_quote!(#extern_trait::Repr)),
-        )
-    } else {
-        (None, sig.return_type(placeholder.clone()))
+            ReturnType::Type(parse_quote!(->), repr_type.clone()),
+        ),
+        Some(output) => (
+            None,
+            ReturnType::Type(parse_quote!(->), output.to_type(placeholder.clone())),
+        ),
+        None => (None, ReturnType::Default),
     };
 
     let trait_name = trait_.unwrap_or_else(|| quote!($trait));
@@ -241,7 +282,7 @@ fn generate_macro_rules(
             fn #ident(#(#arg_names: #arg_types),*) #output {
                 #cast_output(
                     #unsafety {
-                       <$ty as #trait_name>::#ident(#(#arg_names),*)
+                       <$ty as #trait_name>::#ident(#(#call_args),*)
                     }
                 )
             }

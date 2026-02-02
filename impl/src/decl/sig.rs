@@ -174,11 +174,15 @@ pub enum MaybeSelf {
 }
 
 impl MaybeSelf {
-    fn to_type(&self, elem: Box<Type>) -> Box<Type> {
+    pub fn to_type(&self, elem: Box<Type>) -> Box<Type> {
         match self {
             MaybeSelf::Self_(kind) => kind.to_type(elem),
             MaybeSelf::Typed(ty) => ty.clone(),
         }
+    }
+
+    pub fn is_self_value(&self) -> bool {
+        matches!(self, MaybeSelf::Self_(SelfKind::Value))
     }
 }
 
@@ -187,8 +191,8 @@ pub struct VerifiedSignature {
     pub unsafety: Option<Token![unsafe]>,
     pub abi: Option<Abi>,
     pub ident: Ident,
-    inputs: Vec<MaybeSelf>,
-    output: Option<MaybeSelf>,
+    pub inputs: Vec<MaybeSelf>,
+    pub output: Option<MaybeSelf>,
 }
 
 impl VerifiedSignature {
@@ -234,14 +238,7 @@ impl VerifiedSignature {
             .map(|ty| {
                 if ty.contains_self() {
                     if let Some(kind) = ty.self_kind() {
-                        if matches!(kind, SelfKind::Value) {
-                            Err(Error::new_spanned(
-                                ty,
-                                "#[extern_trait] does not support by-value self parameters",
-                            ))
-                        } else {
-                            Ok(MaybeSelf::Self_(kind))
-                        }
+                        Ok(MaybeSelf::Self_(kind))
                     } else {
                         Err(Error::new_spanned(
                             ty,
@@ -280,33 +277,10 @@ impl VerifiedSignature {
 
     pub fn arg_names(&self) -> impl Iterator<Item = Ident> {
         self.inputs.iter().enumerate().map(|(i, arg)| match arg {
-            MaybeSelf::Self_(_) => format_ident!("self"),
-            MaybeSelf::Typed(_) => format_ident!("_{}", i),
+            // Only the first parameter can use `self` keyword
+            MaybeSelf::Self_(_) if i == 0 => format_ident!("self"),
+            _ => format_ident!("_{}", i),
         })
-    }
-
-    pub fn arg_names_no_self(&self) -> impl Iterator<Item = Ident> {
-        self.inputs
-            .iter()
-            .enumerate()
-            .map(|(i, _)| format_ident!("_{}", i))
-    }
-
-    pub fn arg_types(&self, self_type: Box<Type>) -> impl Iterator<Item = Box<Type>> {
-        self.inputs
-            .iter()
-            .map(move |arg| arg.to_type(self_type.clone()))
-    }
-
-    pub fn is_return_self_value(&self) -> bool {
-        matches!(self.output, Some(MaybeSelf::Self_(SelfKind::Value)))
-    }
-
-    pub fn return_type(&self, self_type: Box<Type>) -> ReturnType {
-        match &self.output {
-            None => ReturnType::Default,
-            Some(arg) => ReturnType::Type(parse_quote!(->), arg.to_type(self_type.clone())),
-        }
     }
 }
 
@@ -315,9 +289,17 @@ impl ToTokens for VerifiedSignature {
         let unsafety = &self.unsafety;
         let abi = &self.abi;
         let ident = &self.ident;
-        let arg_names = self.arg_names();
-        let arg_types = self.arg_types(parse_quote!(Self));
-        let output = self.return_type(parse_quote!(Self));
+        let self_type: Box<Type> = parse_quote!(Self);
+        let arg_names = self.arg_names().collect::<Vec<_>>();
+        let arg_types = self
+            .inputs
+            .iter()
+            .map(|input| input.to_type(self_type.clone()))
+            .collect::<Vec<_>>();
+        let output: ReturnType = match &self.output {
+            None => ReturnType::Default,
+            Some(output) => ReturnType::Type(parse_quote!(->), output.to_type(self_type.clone())),
+        };
 
         tokens.extend(quote! {
             #unsafety #abi fn #ident(#(#arg_names: #arg_types),*) #output
