@@ -23,6 +23,7 @@ pub fn expand(args: DeclArgs, input: ItemTrait) -> Result<TokenStream> {
     let extern_trait = args.extern_trait;
     let proxy = args.proxy;
 
+    let vis = &input.vis;
     let unsafety = &input.unsafety;
     let trait_ident = &input.ident;
     let proxy_ident = &proxy.ident;
@@ -178,7 +179,8 @@ pub fn expand(args: DeclArgs, input: ItemTrait) -> Result<TokenStream> {
         }
 
         #[doc(hidden)]
-        pub use #macro_ident as #trait_ident;
+        #[allow(unused_imports)]
+        #vis use #macro_ident as #trait_ident;
     })
 }
 
