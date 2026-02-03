@@ -3,7 +3,7 @@
 [![Crates.io](https://img.shields.io/crates/v/extern-trait?style=flat-square&logo=rust)](https://crates.io/crates/extern-trait)
 [![docs.rs](https://img.shields.io/docsrs/extern-trait?style=flat-square&logo=docs.rs)](https://docs.rs/extern-trait)
 
-Generate proxy types that forward trait method calls across linker boundaries using symbol-based linking.
+Opaque types for traits using link-time static dispatch instead of `dyn Trait`.
 
 ## Motivation
 
