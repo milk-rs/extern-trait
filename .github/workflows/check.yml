@@ -1,0 +1,31 @@
+name: Check
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+env:
+  RUST_BACKTRACE: 1
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: clippy, rustfmt
+      - name: Check format
+        run: cargo fmt --all --check
+      - name: Check clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+      - name: Check docs
+        run: cargo doc --all-features --no-deps

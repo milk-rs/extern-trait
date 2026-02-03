@@ -1,4 +1,4 @@
-name: CI
+name: Test
 
 on:
   push:
@@ -16,20 +16,6 @@ defaults:
     shell: bash
 
 jobs:
-  check:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy, rustfmt
-      - name: Check format
-        run: cargo fmt --all --check
-      - name: Check clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
-      - name: Check docs
-        run: cargo doc --all-features --no-deps
-
   test:
     strategy:
       fail-fast: false
@@ -91,7 +77,7 @@ jobs:
       CARGO_CMD: cargo
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
