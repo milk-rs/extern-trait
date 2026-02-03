@@ -35,29 +35,22 @@ pub fn expand(args: DeclArgs, input: ItemTrait) -> Result<TokenStream> {
 
     for t in &input.items {
         let TraitItem::Fn(f) = t else {
-            impl_content.extend(
-                Error::new_spanned(t, "#[extern_trait] may only contain methods")
-                    .to_compile_error(),
-            );
-            continue;
+            return Err(Error::new_spanned(
+                t,
+                "#[extern_trait] may only contain methods",
+            ));
         };
 
         let export_name = format!("{:?}", sym.clone().with_name(f.sig.ident.to_string()));
+        let sig = VerifiedSignature::try_new(&f.sig)?;
 
-        match VerifiedSignature::try_new(&f.sig) {
-            Ok(sig) => {
-                impl_content.extend(generate_proxy_impl(proxy_ident, &export_name, &sig));
-                macro_content.extend(generate_macro_rules(
-                    &extern_trait,
-                    None,
-                    &export_name,
-                    &sig,
-                ));
-            }
-            Err(e) => {
-                impl_content.extend(e.to_compile_error());
-            }
-        }
+        impl_content.extend(generate_proxy_impl(proxy_ident, &export_name, &sig));
+        macro_content.extend(generate_macro_rules(
+            &extern_trait,
+            None,
+            &export_name,
+            &sig,
+        ));
     }
 
     let mut super_impls = TokenStream::new();
