@@ -1,5 +1,6 @@
 #![no_std]
 #![doc = include_str!("../README.md")]
+#![cfg_attr(feature = "nightly-unsized", feature(extern_types))]
 
 pub use extern_trait_impl::*;
 
@@ -62,6 +63,30 @@ impl<const PTR_COUNT: usize> ReprN<PTR_COUNT> {
         // and the caller ensures the Repr was created from a valid T.
         unsafe { core::ptr::read((&self as *const Self).cast::<T>()) }
     }
+}
+
+#[cfg(not(feature = "nightly-unsized"))]
+type NeverOwned = core::ffi::c_void;
+#[cfg(feature = "nightly-unsized")]
+unsafe extern "C" {
+    type NeverOwned;
+}
+
+
+/// Used to store implementation types in proxy structs
+/// when the `unsized` flag is used.
+///
+/// Logically speaking, this type should be `!Sized`,
+/// so that calling [`core::mem::size_of`] triggers an error.
+/// Unfortunately, that cannot be done on the latest stable without making this type need a fat pointer.
+/// By specifying the feature flag `nightly-unsized`,
+/// this type can be made unsized by way of nightly-only [extern types].j
+///
+/// [extern types]: https://rust-lang.github.io/rfcs/1861-extern-types.html
+#[repr(transparent)]
+#[doc(hidden)]
+pub struct ReprUnsized {
+    never_owned: NeverOwned,
 }
 
 #[doc(hidden)]
