@@ -26,8 +26,8 @@ cargo test test_resource
 cargo test --test arc
 cargo test --test reflect
 
-# Format check (CI uses stable)
-cargo fmt --all --check
+# Format check (requires nightly due to unstable rustfmt features)
+cargo +nightly fmt --all --check
 
 # Lint (CI runs with -D warnings)
 cargo clippy --all-targets --all-features -- -D warnings
@@ -80,12 +80,6 @@ if sig.constness.is_some() {
 ```
 
 ### Unsafe Code
-
-**Always use `// SAFETY:` comments:**
-```rust
-// SAFETY: We asserted size_of::<T>() <= size_of::<Repr>()
-unsafe { core::ptr::write(repr.as_mut_ptr().cast::<T>(), value) }
-```
 
 **FFI patterns (Rust 2024):**
 ```rust
