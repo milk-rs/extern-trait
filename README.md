@@ -139,7 +139,7 @@ const _: () = {
 const _: () = {
     #[unsafe(export_name = "Symbol { ..., trait_name: \"Hello\", ..., name: \"new\" }")]
     fn new(_0: i32) -> ::extern_trait::Repr {
-        ::extern_trait::Repr::from_value(<HelloImpl as Hello>::new(_0))
+        unsafe { ::extern_trait::Repr::from_value(<HelloImpl as Hello>::new(_0)) }
     }
 };
 const _: () = {

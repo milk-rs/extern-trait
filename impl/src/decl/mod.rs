@@ -125,16 +125,18 @@ pub fn expand(args: DeclArgs, input: ItemTrait) -> Result<TokenStream> {
             #[doc = #panic_doc]
             pub fn from_impl<T: #trait_ident>(value: T) -> Self {
                 Self::assert_type_is_impl::<T>();
-                Self(#extern_trait::Repr::from_value(value))
+                Self(unsafe { #extern_trait::Repr::from_value(value) })
             }
 
             /// Convert the proxy type into the implementation type.
             #[doc = #panic_doc]
             pub fn into_impl<T: #trait_ident>(self) -> T {
                 Self::assert_type_is_impl::<T>();
-                #extern_trait::Repr::into_value(
-                    #extern_trait::Repr::from_value(self)
-                )
+                unsafe {
+                    #extern_trait::Repr::into_value(
+                        #extern_trait::Repr::from_value(self)
+                    )
+                }
             }
 
             /// Returns a reference to the implementation type.
@@ -249,24 +251,26 @@ fn generate_macro_rules(
         .zip(&arg_names)
         .map(|(input, name)| {
             if input.is_self_value() {
-                quote!(#extern_trait::Repr::into_value::<$ty>(#name))
+                quote!(unsafe { #extern_trait::Repr::into_value::<$ty>(#name) })
             } else {
                 quote!(#name)
             }
         })
         .collect::<Vec<_>>();
 
-    // For by-value Self return, wrap result in Repr::from_value and use Repr as return type
-    let (cast_output, output) = match &sig.output {
+    let res = quote! { __result };
+
+    let (ret, output) = match &sig.output {
+        // For by-value Self return, wrap result in Repr::from_value and use Repr as return type
         Some(output) if output.is_self_value() => (
-            Some(quote! { #extern_trait::Repr::from_value }),
+            quote! { unsafe { #extern_trait::Repr::from_value(#res) } },
             ReturnType::Type(parse_quote!(->), repr_type.clone()),
         ),
         Some(output) => (
-            None,
+            res.clone(),
             ReturnType::Type(parse_quote!(->), output.to_type(placeholder.clone())),
         ),
-        None => (None, ReturnType::Default),
+        None => (res.clone(), ReturnType::Default),
     };
 
     let trait_name = trait_.unwrap_or_else(|| quote!($trait));
@@ -275,11 +279,10 @@ fn generate_macro_rules(
         const _: () = {
             #[unsafe(export_name = #export_name)]
             fn #ident(#(#arg_names: #arg_types),*) #output {
-                #cast_output(
-                    #unsafety {
-                       <$ty as #trait_name>::#ident(#(#call_args),*)
-                    }
-                )
+                let #res = #unsafety {
+                    <$ty as #trait_name>::#ident(#(#call_args),*)
+                };
+                #ret
             }
         };
     }
