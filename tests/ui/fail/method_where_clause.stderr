@@ -1,0 +1,6 @@
+error: #[extern_trait] does not support where clauses
+ --> tests/ui/fail/method_where_clause.rs:6:5
+  |
+6 | /     where
+7 | |         Self: Sized;
+  | |___________________^

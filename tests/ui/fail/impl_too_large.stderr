@@ -1,0 +1,5 @@
+error[E0080]: evaluation panicked: TooLarge is too large to be used with #[extern_trait]
+  --> tests/ui/fail/impl_too_large.rs:11:14
+   |
+11 | impl Api for TooLarge {
+   |              ^^^^^^^^ evaluation of `_` failed here

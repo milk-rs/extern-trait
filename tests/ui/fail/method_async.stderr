@@ -1,0 +1,5 @@
+error: #[extern_trait] does not support async functions
+ --> tests/ui/fail/method_async.rs:5:5
+  |
+5 |     async fn value(&self) -> i32;
+  |     ^^^^^

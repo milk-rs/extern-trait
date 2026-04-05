@@ -1,0 +1,5 @@
+error: #[extern_trait] does not support generic functions
+ --> tests/ui/fail/method_generic.rs:5:13
+  |
+5 |     fn value<T>(&self, t: T) -> T;
+  |             ^^^

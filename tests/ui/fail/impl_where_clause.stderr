@@ -1,0 +1,5 @@
+error: #[extern_trait] impls may not have generics
+  --> tests/ui/fail/impl_where_clause.rs:11:5
+   |
+11 | impl<T> Api for Impl<T>
+   |     ^^^

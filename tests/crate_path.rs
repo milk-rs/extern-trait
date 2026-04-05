@@ -16,7 +16,7 @@ impl Renamed for RenamedImpl {
 }
 
 #[test]
-fn test_renamed_crate() {
+fn renamed_crate_path_works_for_decl_and_impl() {
     let proxy = RenamedProxy::from_impl(RenamedImpl(42));
     assert_eq!(proxy.value(), 42);
 }
