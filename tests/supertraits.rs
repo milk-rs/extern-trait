@@ -1,6 +1,8 @@
-use std::borrow::{Borrow, BorrowMut};
-use std::fmt::{Debug, Display};
-use std::panic::{RefUnwindSafe, UnwindSafe};
+use std::{
+    borrow::{Borrow, BorrowMut},
+    fmt::{Debug, Display},
+    panic::{RefUnwindSafe, UnwindSafe},
+};
 
 use extern_trait::extern_trait;
 
