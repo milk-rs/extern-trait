@@ -24,10 +24,10 @@ The traditional solution is `Box<dyn Trait>`, but this has drawbacks:
 ## How it Works
 
 1. **Proxy generation**: The macro creates a fixed-size proxy struct that stores the implementation value inline
-2. **Symbol export**: Each trait method is exported as a linker symbol from the implementation crate
-3. **Symbol linking**: The proxy calls these symbols, which the linker resolves to the actual implementation
+2. **VTable generation**: A `#[repr(C)]` VTable struct is generated containing function pointers for all trait methods (including supertraits), plus `typeid` and `drop`
+3. **Symbol linking**: The implementation crate exports a single VTable static per trait via a linker symbol; the proxy crate imports it and dispatches all method calls through the VTable
 
-Think of it as compile-time monomorphization deferred to link time.
+Think of it as compile-time monomorphization deferred to link time. Under LTO, the VTable is fully inlined and eliminated.
 
 The proxy uses a fixed-size representation:
 
@@ -76,7 +76,7 @@ impl Hello for HelloImpl {
 <summary>View generated code</summary>
 
 ```rust
-// In crate A
+// In crate A — proxy side
 /// A Hello trait.
 pub trait Hello {
     fn new(num: i32) -> Self;
@@ -87,82 +87,109 @@ pub trait Hello {
 #[repr(transparent)]
 pub(crate) struct HelloProxy(::extern_trait::Repr);
 
-impl Hello for HelloProxy {
-    fn new(_0: i32) -> Self {
-        unsafe extern "Rust" {
-            #[link_name = "Symbol { ..., trait_name: \"Hello\", ..., name: \"new\" }"]
-            unsafe fn new(_: i32) -> HelloProxy;
-
-        }
-        unsafe { new(_0) }
+const _: () = {
+    // VTable struct: typeid + drop + one fn pointer per method
+    #[repr(C)]
+    struct __HelloVTable {
+        typeid: ::extern_trait::__private::ConstTypeId,
+        drop: unsafe fn(*mut HelloProxy),
+        new: fn(i32) -> ::extern_trait::Repr,
+        hello: fn(&HelloProxy),
     }
 
-    fn hello(&self) {
-        unsafe extern "Rust" {
-            #[link_name = "Symbol { ..., trait_name: \"Hello\", ..., name: \"hello\" }"]
-            unsafe fn hello(_: &HelloProxy);
-        }
-        unsafe { hello(self) }
+    // Import the VTable static via linker symbol
+    unsafe extern "Rust" {
+        #[link_name = "Symbol { ... }"]
+        safe static VT: __HelloVTable;
     }
-}
 
-impl Drop for HelloProxy {
-    fn drop(&mut self) {
-        unsafe extern "Rust" {
-            #[link_name = "Symbol { ..., trait_name: \"Hello\", ..., name: \"drop\" }"]
-            unsafe fn drop(this: *mut HelloProxy);
+    // Dispatch trait methods through VTable
+    impl Hello for HelloProxy {
+        fn new(_0: i32) -> HelloProxy {
+            HelloProxy((VT.new)(_0))
         }
-        unsafe { drop(self) }
+        fn hello(&self) {
+            (VT.hello)(self)
+        }
     }
-}
 
-// In crate B
+    impl Drop for HelloProxy {
+        fn drop(&mut self) {
+            unsafe { (VT.drop)(self) }
+        }
+    }
+
+    // ... cast methods: from_impl, into_impl, downcast_ref, downcast_mut
+};
+
+// In crate B — impl side
 struct HelloImpl(i32);
 
 impl Hello for HelloImpl {
-    fn new(num: i32) -> Self {
-        Self(num)
-    }
-
-    fn hello(&self) {
-        println!("Hello, {}", self.0)
-    }
+    fn new(num: i32) -> Self { Self(num) }
+    fn hello(&self) { println!("Hello, {}", self.0) }
 }
 
+// Size check
 const _: () = {
     assert!(
-        ::core::mem::size_of::<HelloImpl>() <= ::core::mem::size_of::<::extern_trait::Repr>(),
+        ::core::mem::size_of::<HelloImpl>()
+            <= ::core::mem::size_of::<::extern_trait::Repr>(),
         "HelloImpl is too large to be used with #[extern_trait]"
     );
 };
 
+// Export VTable static with matching layout
 const _: () = {
-    #[unsafe(export_name = "Symbol { ..., trait_name: \"Hello\", ..., name: \"new\" }")]
-    fn new(_0: i32) -> ::extern_trait::Repr {
-        unsafe { ::extern_trait::Repr::from_value(<HelloImpl as Hello>::new(_0)) }
+    #[repr(C)]
+    struct __HelloVTable {
+        typeid: ::extern_trait::__private::ConstTypeId,
+        drop: unsafe fn(*mut HelloImpl),
+        new: fn(i32) -> ::extern_trait::Repr,
+        hello: fn(&HelloImpl),
     }
-};
-const _: () = {
-    #[unsafe(export_name = "Symbol { ..., trait_name: \"Hello\", ..., name: \"hello\" }")]
-    fn hello(_0: &HelloImpl) {
-        <HelloImpl as Hello>::hello(_0)
-    }
-};
-const _: () = {
-    #[unsafe(export_name = "Symbol { ..., trait_name: \"Hello\", ..., name: \"drop\" }")]
-    unsafe fn drop(this: *mut HelloImpl) {
-        unsafe { ::core::ptr::drop_in_place(this) };
-    }
+
+    #[unsafe(export_name = "Symbol { ... }")]
+    static VT: __HelloVTable = __HelloVTable {
+        typeid: ::extern_trait::__private::ConstTypeId::of::<HelloImpl>(),
+        drop: |this: *mut HelloImpl| unsafe { ::core::ptr::drop_in_place(this) },
+        new: |_0: i32| {
+            let __result = <HelloImpl as Hello>::new(_0);
+            unsafe { ::extern_trait::Repr::from_value(__result) }
+        },
+        hello: |_0: &HelloImpl| { <HelloImpl as Hello>::hello(_0) },
+    };
 };
 ```
 
 </details>
 
+## Performance
+
+`#[extern_trait]` dispatches through a static VTable — a `#[repr(C)]` struct of function pointers linked across crates. Without LTO, these remain indirect calls. **With LTO enabled (`lto = "thin"` is sufficient), the compiler inlines the VTable entirely, eliminating all indirection and achieving true zero overhead.**
+
+Add this to your `Cargo.toml`:
+
+```toml
+[profile.release]
+lto = "thin"
+```
+
+Verified behavior under `lto = "thin"`:
+
+- All VTable function pointer calls are inlined and optimized as if they were direct calls
+- Unused trait methods are eliminated by dead code elimination
+- The VTable static itself is removed from the final binary
+
+Without LTO, every method call goes through a function pointer (`call *(%rip)`), similar to `dyn Trait` dispatch. This is the expected cost of cross-crate opaque linking.
+
+In debug builds (`opt-level = 0`), there is additional overhead from `Repr::from_value` and `Repr::into_value`: these are zero-cost transmutes that normally compile to pure register moves (see [Internals](#why-two-pointers)), but without optimization the compiler materializes them as stack round-trips. This disappears at `opt-level >= 1`.
+
 ## Trait Restrictions
 
 - No generics on the trait itself
 - Only methods allowed (no associated types or constants)
-- Methods must be FFI-compatible: no `const`, `async`, or generic parameters
+- Methods must be FFI-compatible: no `const`, `async`, generic parameters, or non-Rust ABI
 - `Self` in signatures must be one of: `Self`, `&Self`, `&mut Self`, `*const Self`, `*mut Self`
 
 ## Size Constraint

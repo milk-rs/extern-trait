@@ -4,7 +4,7 @@ This document provides essential information for AI agents working on the `exter
 
 ## Project Overview
 
-`extern-trait` is a Rust procedural macro that creates opaque proxy types for traits using link-time static dispatch instead of dynamic dispatch (`dyn Trait`). Method calls are resolved through exported linker symbols, enabling cross-crate abstraction without vtables or heap allocation.
+`extern-trait` is a Rust procedural macro that creates opaque proxy types for traits using link-time static dispatch instead of dynamic dispatch (`dyn Trait`). A single `#[repr(C)]` VTable struct is generated per trait containing function pointers for all methods (including supertraits), plus `typeid` and `drop`. The implementation crate exports the VTable as a linker symbol; the proxy crate imports it and dispatches all calls through the VTable. Under LTO, the VTable is fully inlined and eliminated.
 
 **Workspace Structure:**
 - `extern-trait` (root): Main crate with `#[extern_trait]` macro and `Repr` type
@@ -81,14 +81,17 @@ if sig.constness.is_some() {
 
 ### Unsafe Code
 
-**FFI patterns (Rust 2024):**
+**VTable patterns (Rust 2024):**
 ```rust
+// Proxy side: import VTable static
 unsafe extern "Rust" {
     #[link_name = "..."]
-    unsafe fn method(...);
+    safe static VT: __TraitVTable;
 }
+
+// Impl side: export VTable static
 #[unsafe(export_name = "...")]
-fn exported_method(...) { }
+static VT: __TraitVTable = __TraitVTable { ... };
 ```
 
 ### Testing Patterns
@@ -117,7 +120,7 @@ fn test_atomic() {
 1. **Size**: Impl types must fit in `Repr` (16 bytes on 64-bit)
 2. **No generics**: Traits cannot have generic parameters
 3. **Methods only**: No associated types or constants
-4. **FFI-compatible**: No `const`, `async`, or generic methods
+4. **FFI-compatible**: No `const`, `async`, generic methods, or non-Rust ABI
 5. **Self types**: Only `Self`, `&Self`, `&mut Self`, `*const Self`, `*mut Self`
 
 ## Module Organization
@@ -130,11 +133,12 @@ extern-trait/
 │   ├── args.rs             # DeclArgs, ImplArgs, Proxy struct and parsing
 │   ├── imp.rs              # impl block expansion: size assertion, trait macro call
 │   └── decl/
-│       ├── mod.rs          # Trait expansion: proxy type, trait impl, Drop, downcast methods
+│       ├── mod.rs          # Trait expansion: VTable struct, proxy type, trait/supertrait impls, Drop, downcast, macro_rules
 │       ├── symbol.rs       # Unique linker symbol name generation (hash-based)
 │       ├── supertraits.rs  # Collect and expand supported supertraits (markers + method traits)
 │       └── types.rs        # VerifiedSignature, SelfKind, MaybeSelf for signature validation
 └── tests/                  # Integration tests
+    ├── copy.rs             # Copy supertrait: proxy is Copy, no Drop
     ├── crate_path.rs       # crate = path argument for renamed crate paths
     ├── dispatch.rs         # Instance and static method dispatch, by-value Self chaining
     ├── downcast.rs         # from_impl, into_impl, downcast_ref, downcast_mut, type assertion
@@ -142,7 +146,7 @@ extern-trait/
     ├── supertraits.rs      # Marker traits and standard trait forwarding (Send, Clone, Debug, etc.)
     ├── ui.rs               # trybuild UI test runner
     └── ui/
-        ├── fail/           # Compile-fail tests (const, async, generics, etc.)
+        ├── fail/           # Compile-fail tests (const, async, generics, ABI, etc.)
         └── pass/           # Compile-pass tests
 ```
 
