@@ -2,7 +2,7 @@
 members = ["impl"]
 
 [workspace.package]
-version = "0.4.1"
+version = "0.4.2"
 edition = "2024"
 authors = ["朝倉水希 <asakuramizu111@gmail.com>"]
 description = "Opaque types for traits using static dispatch"
@@ -23,7 +23,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-extern-trait-impl = { version = "=0.4.1", path = "impl" }
+extern-trait-impl = { version = "=0.4.2", path = "impl" }
 typeid = "1"
 
 [dev-dependencies]
