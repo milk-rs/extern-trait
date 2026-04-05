@@ -1,0 +1,5 @@
+error: #[extern_trait] does not support non-Rust ABI
+ --> tests/ui/fail/method_abi.rs:5:5
+  |
+5 |     extern "C" fn value(&self) -> i32;
+  |     ^^^^^^^^^^
