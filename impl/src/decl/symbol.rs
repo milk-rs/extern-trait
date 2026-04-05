@@ -21,6 +21,7 @@ fn crate_local_disambiguator() -> u64 {
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
 pub struct Symbol {
+    hint: String,
     extern_trait: String,
     package: String,
     version: String,
@@ -28,12 +29,16 @@ pub struct Symbol {
     package_disambiguator: u64,
     trait_name: String,
     local_disambiguator: u64,
-    name: String,
 }
 
 impl Symbol {
     pub fn new(trait_name: String) -> Self {
+        let hint = format!(
+            "missing #[extern_trait] impl for trait `{trait_name}` — add an #[extern_trait] impl \
+             block in the implementing crate",
+        );
         Self {
+            hint,
             extern_trait: "v0".to_string(),
             package: var("CARGO_PKG_NAME").unwrap_or("<unknown>".to_string()),
             version: var("CARGO_PKG_VERSION").unwrap_or("<unknown>".to_string()),
@@ -41,12 +46,6 @@ impl Symbol {
             package_disambiguator: hash(var("CARGO_MANIFEST_PATH").as_deref().unwrap_or_default()),
             trait_name,
             local_disambiguator: crate_local_disambiguator(),
-            name: String::new(),
         }
-    }
-
-    pub fn with_name(mut self, name: impl AsRef<str>) -> Self {
-        self.name = name.as_ref().to_string();
-        self
     }
 }

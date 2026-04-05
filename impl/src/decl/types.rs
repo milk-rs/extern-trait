@@ -1,8 +1,8 @@
 use proc_macro2::TokenStream;
 use quote::{ToTokens, format_ident, quote};
 use syn::{
-    Abi, Error, FnArg, GenericArgument, Ident, Lifetime, PathArguments, Result, ReturnType,
-    Signature, Token, Type, TypePtr, TypeReference, parse_quote,
+    Error, FnArg, GenericArgument, Ident, Lifetime, PathArguments, Result, ReturnType, Signature,
+    Token, Type, TypePtr, TypeReference, parse_quote,
 };
 
 #[derive(Debug, Clone)]
@@ -21,9 +21,9 @@ pub enum SelfKind {
 }
 
 impl SelfKind {
-    fn to_type(&self, elem: Box<Type>) -> Box<Type> {
+    fn to_type(&self, elem: &Type) -> Box<Type> {
         match self {
-            SelfKind::Value => elem,
+            SelfKind::Value => Box::new(elem.clone()),
             SelfKind::Ptr {
                 star_token,
                 const_token,
@@ -32,7 +32,7 @@ impl SelfKind {
                 star_token: *star_token,
                 const_token: *const_token,
                 mutability: *mutability,
-                elem,
+                elem: Box::new(elem.clone()),
             })),
             SelfKind::Ref {
                 and_token,
@@ -42,7 +42,7 @@ impl SelfKind {
                 and_token: *and_token,
                 lifetime: lifetime.clone(),
                 mutability: *mutability,
-                elem,
+                elem: Box::new(elem.clone()),
             })),
         }
     }
@@ -174,7 +174,7 @@ pub enum MaybeSelf {
 }
 
 impl MaybeSelf {
-    pub fn to_type(&self, elem: Box<Type>) -> Box<Type> {
+    pub fn to_type(&self, elem: &Type) -> Box<Type> {
         match self {
             MaybeSelf::Self_(kind) => kind.to_type(elem),
             MaybeSelf::Typed(ty) => ty.clone(),
@@ -189,7 +189,6 @@ impl MaybeSelf {
 #[derive(Debug, Clone)]
 pub struct VerifiedSignature {
     pub unsafety: Option<Token![unsafe]>,
-    pub abi: Option<Abi>,
     pub ident: Ident,
     pub inputs: Vec<MaybeSelf>,
     pub output: Option<MaybeSelf>,
@@ -225,6 +224,18 @@ impl VerifiedSignature {
             return Err(Error::new_spanned(
                 &sig.variadic,
                 "#[extern_trait] does not support variadic functions",
+            ));
+        }
+        if let Some(abi) = &sig.abi
+            && sig
+                .abi
+                .as_ref()
+                .and_then(|abi| abi.name.as_ref())
+                .is_some_and(|name| name.value() != "Rust")
+        {
+            return Err(Error::new_spanned(
+                abi,
+                "#[extern_trait] does not support non-Rust ABI",
             ));
         }
 
@@ -268,41 +279,55 @@ impl VerifiedSignature {
 
         Ok(Self {
             unsafety: sig.unsafety,
-            abi: sig.abi.clone(),
             ident: sig.ident.clone(),
             inputs,
             output,
         })
     }
+}
 
-    pub fn arg_names(&self) -> impl Iterator<Item = Ident> {
-        self.inputs.iter().enumerate().map(|(i, arg)| match arg {
+pub fn arg_names(inputs: &[MaybeSelf]) -> Vec<Ident> {
+    inputs
+        .iter()
+        .enumerate()
+        .map(|(i, arg)| match arg {
             // Only the first parameter can use `self` keyword
             MaybeSelf::Self_(_) if i == 0 => format_ident!("self"),
             _ => format_ident!("_{}", i),
         })
+        .collect()
+}
+
+pub fn make_return_type(output: &Option<MaybeSelf>, self_type: &Type) -> ReturnType {
+    match output {
+        None => ReturnType::Default,
+        Some(ty) => ReturnType::Type(parse_quote!(->), ty.to_type(self_type)),
     }
 }
 
 impl ToTokens for VerifiedSignature {
     fn to_tokens(&self, tokens: &mut TokenStream) {
-        let unsafety = &self.unsafety;
-        let abi = &self.abi;
-        let ident = &self.ident;
-        let self_type: Box<Type> = parse_quote!(Self);
-        let arg_names = self.arg_names().collect::<Vec<_>>();
-        let arg_types = self
-            .inputs
+        let VerifiedSignature {
+            unsafety,
+            ident,
+            inputs,
+            output,
+        } = self;
+
+        let self_type: Type = parse_quote!(Self);
+
+        let arg_names = arg_names(inputs);
+        let arg_types = inputs
             .iter()
-            .map(|input| input.to_type(self_type.clone()))
+            .map(|input| input.to_type(&self_type))
             .collect::<Vec<_>>();
-        let output: ReturnType = match &self.output {
+        let output: ReturnType = match output {
             None => ReturnType::Default,
-            Some(output) => ReturnType::Type(parse_quote!(->), output.to_type(self_type.clone())),
+            Some(output) => ReturnType::Type(parse_quote!(->), output.to_type(&self_type)),
         };
 
         tokens.extend(quote! {
-            #unsafety #abi fn #ident(#(#arg_names: #arg_types),*) #output
+            #unsafety fn #ident(#(#arg_names: #arg_types),*) #output
         });
     }
 }
