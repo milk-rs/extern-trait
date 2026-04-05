@@ -124,17 +124,26 @@ fn test_atomic() {
 
 ```
 extern-trait/
-├── src/lib.rs              # Repr type, re-exports proc-macro
+├── src/lib.rs              # Repr type (opaque storage), re-exports proc-macro, ConstTypeId
 ├── impl/src/
-│   ├── lib.rs              # Macro entry point
-│   ├── args.rs             # Argument parsing
-│   ├── imp.rs              # impl block expansion
+│   ├── lib.rs              # Macro entry point, dispatches to decl/imp based on args
+│   ├── args.rs             # DeclArgs, ImplArgs, Proxy struct and parsing
+│   ├── imp.rs              # impl block expansion: size assertion, trait macro call
 │   └── decl/
-│       ├── mod.rs          # Trait declaration expansion
-│       ├── sig.rs          # Signature verification
-│       ├── sym.rs          # Symbol name generation
-│       └── supertraits.rs  # Send, Sync, Clone, Debug, etc.
+│       ├── mod.rs          # Trait expansion: proxy type, trait impl, Drop, downcast methods
+│       ├── symbol.rs       # Unique linker symbol name generation (hash-based)
+│       ├── supertraits.rs  # Collect and expand supported supertraits (markers + method traits)
+│       └── types.rs        # VerifiedSignature, SelfKind, MaybeSelf for signature validation
 └── tests/                  # Integration tests
+    ├── crate_path.rs       # crate = path argument for renamed crate paths
+    ├── dispatch.rs         # Instance and static method dispatch, by-value Self chaining
+    ├── downcast.rs         # from_impl, into_impl, downcast_ref, downcast_mut, type assertion
+    ├── drop.rs             # Drop forwarding from proxy to impl type
+    ├── supertraits.rs      # Marker traits and standard trait forwarding (Send, Clone, Debug, etc.)
+    ├── ui.rs               # trybuild UI test runner
+    └── ui/
+        ├── fail/           # Compile-fail tests (const, async, generics, etc.)
+        └── pass/           # Compile-pass tests
 ```
 
 ## Common Patterns
@@ -148,5 +157,3 @@ quote! { ... }              // Generate TokenStream
 parse_quote!(#ident)        // Create syn types
 format_ident!("{}Proxy", x) // Programmatic identifiers
 ```
-
-Prefer iterators over collecting into Vec.

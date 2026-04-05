@@ -1,5 +1,3 @@
-#![allow(unused)]
-
 use std::env::var;
 
 use proc_macro::Span;
@@ -21,6 +19,7 @@ fn crate_local_disambiguator() -> u64 {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct Symbol {
     extern_trait: String,
     package: String,

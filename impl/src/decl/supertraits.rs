@@ -1,13 +1,15 @@
-use std::{cell::LazyCell, collections::BTreeMap};
+use std::cell::LazyCell;
 
-use proc_macro2::TokenStream;
-use quote::{ToTokens, quote};
-use syn::{Ident, Path, PathArguments, PathSegment, Signature, TraitItemFn, parse_quote};
+use quote::ToTokens;
+use syn::{
+    Ident, Path, PathArguments, PathSegment, Signature, Token, TraitBoundModifier, TraitItemFn,
+    TypeParamBound, parse_quote, punctuated::Punctuated,
+};
 
-use super::{sig::VerifiedSignature, sym::Symbol};
+use super::types::VerifiedSignature;
 
 #[derive(Debug, Clone)]
-struct SuperTraitInfo {
+struct Supertrait {
     is_unsafe: bool,
     name: Ident,
     generics: usize,
@@ -16,11 +18,12 @@ struct SuperTraitInfo {
 
 macro_rules! supertrait {
     (
-        $is_unsafe:literal $name:ident $(<$gen:literal>)? {
+        is_unsafe: $is_unsafe:expr,
+        name: $name:ident $(<$gen:literal>)? {
             $($f:stmt)*
         }
     ) => {
-        SuperTraitInfo {
+        Supertrait {
             is_unsafe: $is_unsafe,
             name: parse_quote!($name),
             generics: 0 $(+ $gen)?,
@@ -33,26 +36,53 @@ macro_rules! supertrait {
         }
     };
     (
-        unsafe $($rest:tt)*
+        unsafe $name:ident {
+            $($f:stmt)*
+        }
     ) => {
-        supertrait!(true $($rest)*)
+        supertrait! {
+            is_unsafe: true,
+            name: $name { $($f)* }
+        }
     };
     (
-        $($rest:tt)*
+        $name:ident {
+            $($f:stmt)*
+        }
     ) => {
-        supertrait!(false $($rest)*)
+        supertrait! {
+            is_unsafe: false,
+            name: $name { $($f)* }
+        }
+    };
+    (
+        $name:ident <$gen:literal> {
+            $($f:stmt)*
+        }
+    ) => {
+        supertrait! {
+            is_unsafe: false,
+            name: $name <$gen> { $($f)* }
+        }
     };
 }
 
 #[allow(clippy::declare_interior_mutable_const)]
-const TRAITS: LazyCell<Vec<SuperTraitInfo>> = LazyCell::new(|| {
+const SUPERTRAITS: LazyCell<Vec<Supertrait>> = LazyCell::new(|| {
     vec![
         supertrait! { unsafe Send {} },
         supertrait! { unsafe Sync {} },
         supertrait! { Sized {} },
         supertrait! { Unpin {} },
         supertrait! { Copy {} },
+        supertrait! { Eq {} },
+        supertrait! { UnwindSafe {} },
+        supertrait! { RefUnwindSafe {} },
+        supertrait! { Freeze {} },
         supertrait! { Debug {
+            fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result;
+        } },
+        supertrait! { Display {
             fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result;
         } },
         supertrait! { Clone {
@@ -61,27 +91,47 @@ const TRAITS: LazyCell<Vec<SuperTraitInfo>> = LazyCell::new(|| {
         supertrait! { Default {
             fn default() -> Self;
         } },
+        supertrait! { PartialEq {
+            fn eq(&self, other: &Self) -> bool;
+        } },
+        supertrait! { PartialOrd {
+            fn partial_cmp(&self, other: &Self) -> Option<::core::cmp::Ordering>;
+        } },
+        supertrait! { Ord {
+            fn cmp(&self, other: &Self) -> ::core::cmp::Ordering;
+        } },
         supertrait! { AsRef<1> {
             fn as_ref(&self) -> &____0;
         } },
         supertrait! { AsMut<1> {
             fn as_mut(&mut self) -> &mut ____0;
         } },
+        supertrait! { Borrow<1> {
+            fn borrow(&self) -> &____0;
+        } },
+        supertrait! { BorrowMut<1> {
+            fn borrow_mut(&mut self) -> &mut ____0;
+        } },
     ]
 });
 
-pub fn generate_impl(
-    extern_trait: &Path,
-    path: &PathSegment,
-    proxy_ident: &Ident,
-    sym: &Symbol,
-) -> Option<(TokenStream, TokenStream)> {
-    let PathSegment { ident, arguments } = path;
+#[derive(Debug, Clone)]
+pub struct SupertraitInfo {
+    pub is_unsafe: bool,
+    pub path: Path,
+    pub methods: Vec<VerifiedSignature>,
+}
+
+fn match_supertrait(path: &Path) -> Option<SupertraitInfo> {
+    if path.leading_colon.is_some() || path.segments.len() != 1 {
+        return None;
+    }
+    let PathSegment { ident, arguments } = &path.segments[0];
 
     #[allow(clippy::borrow_interior_mutable_const)]
-    let t = TRAITS
+    let t = SUPERTRAITS
         .iter()
-        .find(|&t| {
+        .find(|t| {
             &t.name == ident
                 && match (&arguments, t.generics) {
                     (PathArguments::None, 0) => true,
@@ -91,56 +141,48 @@ pub fn generate_impl(
         })
         .cloned()?;
 
-    let unsafety = if t.is_unsafe {
-        quote! { unsafe }
-    } else {
-        quote! {}
-    };
-
-    let mut replace_map = BTreeMap::new();
-    if let PathArguments::AngleBracketed(args) = arguments {
+    let mut replace_map: Vec<(String, String)> = Vec::new();
+    if let PathArguments::AngleBracketed(args) = &arguments {
         for (i, arg) in args.args.iter().enumerate() {
-            replace_map.insert(format!("____{}", i), arg.to_token_stream().to_string());
+            replace_map.push((format!("____{}", i), arg.to_token_stream().to_string()));
         }
     }
 
-    let transformed = t
+    let methods = t
         .functions
-        .into_iter()
+        .iter()
         .map(|sig| {
-            let sig = sig.to_token_stream().to_string();
-            let sig = replace_map
+            let sig_str = sig.to_token_stream().to_string();
+            let sig_str = replace_map
                 .iter()
-                .fold(sig, |acc, (k, v)| acc.replace(k, v));
-            VerifiedSignature::try_new(&syn::parse_str::<Signature>(&sig).unwrap()).unwrap()
+                .fold(sig_str, |acc, (k, v)| acc.replace(k, v));
+            let parsed = syn::parse_str::<Signature>(&sig_str).unwrap();
+            VerifiedSignature::try_new(&parsed).unwrap()
         })
         .collect::<Vec<_>>();
 
-    let impl_content = transformed.iter().map(|sig| {
-        let export_name = format!(
-            "{:?}",
-            sym.clone()
-                .with_name(format!("{}::{}", path.to_token_stream(), sig.ident))
-        );
-        super::generate_proxy_impl(proxy_ident, &export_name, sig)
-    });
-    let macro_content = transformed.iter().map(|sig| {
-        let export_name = format!(
-            "{:?}",
-            sym.clone()
-                .with_name(format!("{}::{}", path.to_token_stream(), sig.ident))
-        );
-        super::generate_macro_rules(extern_trait, Some(quote!(#path)), &export_name, sig)
-    });
+    Some(SupertraitInfo {
+        is_unsafe: t.is_unsafe,
+        path: path.clone(),
+        methods,
+    })
+}
 
-    Some((
-        quote! {
-            #unsafety impl #path for #proxy_ident {
-                #(#impl_content)*
+pub fn collect_supertraits(
+    supertraits: &Punctuated<TypeParamBound, Token![+]>,
+) -> Vec<SupertraitInfo> {
+    supertraits
+        .iter()
+        .filter_map(|bound| {
+            if let TypeParamBound::Trait(t) = bound
+                && matches!(t.modifier, TraitBoundModifier::None)
+                && t.lifetimes.is_none()
+                && let Some(info) = match_supertrait(&t.path)
+            {
+                Some(info)
+            } else {
+                None
             }
-        },
-        quote! {
-            #(#macro_content)*
-        },
-    ))
+        })
+        .collect()
 }

@@ -188,13 +188,19 @@ An `#[extern_trait]` can have supertraits, and the macro will automatically forw
 
 **Supported supertraits:**
 
-| Marker traits | Standard traits |
-| ------------- | --------------- |
-| `Send`        | `Clone`         |
-| `Sync`        | `Default`       |
-| `Sized`       | `Debug`         |
-| `Unpin`       | `AsRef<T>`      |
-| `Copy`        | `AsMut<T>`      |
+| Marker traits   | Standard traits |
+| --------------- | --------------- |
+| `Send`          | `Clone`         |
+| `Sync`          | `Default`       |
+| `Sized`         | `Debug`         |
+| `Unpin`         | `Display`       |
+| `Copy`          | `PartialEq`     |
+| `Eq`            | `PartialOrd`    |
+| `UnwindSafe`    | `Ord`           |
+| `RefUnwindSafe` | `AsRef<T>`      |
+| `Freeze`        | `AsMut<T>`      |
+|                 | `Borrow<T>`     |
+|                 | `BorrowMut<T>`  |
 
 ```rust
 use std::fmt::Debug;
