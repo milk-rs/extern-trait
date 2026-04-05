@@ -150,7 +150,7 @@ const _: () = {
 };
 const _: () = {
     #[unsafe(export_name = "Symbol { ..., trait_name: \"Hello\", ..., name: \"drop\" }")]
-    unsafe fn drop(this: &mut HelloImpl) {
+    unsafe fn drop(this: *mut HelloImpl) {
         unsafe { ::core::ptr::drop_in_place(this) };
     }
 };
@@ -210,6 +210,33 @@ use extern_trait::extern_trait;
 trait Resource: Send + Sync + Clone + Debug {
     fn new() -> Self;
 }
+```
+
+### `Copy` Supertrait
+
+When a trait includes `Copy` as a supertrait, the proxy type will also implement `Copy`. **No `Drop` implementation is generated** for `Copy` proxy types, since `Copy` types cannot have custom drop behavior in Rust.
+
+```rust
+use extern_trait::extern_trait;
+
+#[extern_trait(CopyProxy)]
+trait CopyApi: Clone + Copy {
+    fn new(v: u8) -> Self;
+    fn value(&self) -> u8;
+}
+
+#[extern_trait]
+impl CopyApi for u8 {
+    fn new(v: u8) -> Self { v }
+    fn value(&self) -> u8 { *self }
+}
+
+// CopyProxy implements Copy - can be freely copied by value
+let a = CopyProxy::new(42);
+let b = a;  // copied, not moved
+assert_eq!(a.value(), 42);  // a is still valid
+
+assert!(!core::mem::needs_drop::<CopyProxy>());  // no Drop
 ```
 
 ## Re-exporting / Renaming

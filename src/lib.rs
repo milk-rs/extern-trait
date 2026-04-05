@@ -10,13 +10,17 @@ pub use extern_trait_impl::*;
 ///
 /// The size constraint is checked at compile time.
 #[doc(hidden)]
+#[derive(Clone, Copy)]
 #[repr(C)]
 pub struct Repr(
-    // This strange form is used to make this type `!Send`, `!Sync`, `!Unpin`, `!UnwindSafe`, `!RefUnwindSafe` and `!Freeze` without using any unstable features.
     *mut (),
-    &'static mut (),
-    core::cell::UnsafeCell<()>,
-    core::marker::PhantomPinned,
+    *mut (),
+    // make this type `!Send + !Sync + !Unpin + !UnwindSafe + !RefUnwindSafe + !Freeze`
+    core::marker::PhantomData<(
+        &'static mut (),
+        core::cell::UnsafeCell<()>,
+        core::marker::PhantomPinned,
+    )>,
 );
 
 const _: () = assert!(size_of::<Repr>() == size_of::<usize>() * 2);

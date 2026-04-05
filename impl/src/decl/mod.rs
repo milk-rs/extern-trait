@@ -20,6 +20,7 @@ struct ExpandCtx {
     input: ItemTrait,
     // parsed
     sym: Symbol,
+    copy: bool,
     // generated
     macro_items: TokenStream,
 }
@@ -44,6 +45,7 @@ impl ExpandCtx {
             proxy,
             input,
             sym,
+            copy: false,
             macro_items: TokenStream::new(),
         })
     }
@@ -204,6 +206,10 @@ impl ExpandCtx {
                 methods,
             } = info;
 
+            if path.is_ident("Copy") {
+                self.copy = true;
+            }
+
             for method in methods {
                 let export_name = format!(
                     "{:?}",
@@ -237,7 +243,7 @@ impl ExpandCtx {
         self.macro_items.extend(quote! {
             const _: () = {
                 #[unsafe(export_name = #drop_name)]
-                unsafe fn drop(this: &mut $ty) {
+                unsafe fn drop(this: *mut $ty) {
                     unsafe { ::core::ptr::drop_in_place(this) };
                 }
             };
@@ -352,7 +358,7 @@ impl ExpandCtx {
     fn expand(&mut self) -> Result<TokenStream> {
         let trait_impl = self.expand_trait_impl()?;
         let supertrait_impls = self.expand_supertrait_impls();
-        let drop_impl = self.expand_drop_impl();
+        let drop_impl = (!self.copy).then(|| self.expand_drop_impl());
         let cast_impl = self.expand_cast_impl();
         let macro_rules = self.expand_macro_rules();
 
