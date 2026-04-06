@@ -27,13 +27,13 @@ struct MethodInfo {
 }
 
 impl MethodInfo {
-    /// VTable field name: `method` for own methods, `Trait_method` for supertrait.
+    /// VTable field name: `method` for own methods, `__Trait_method` for supertrait.
     fn field_name(&self) -> Ident {
         match &self.supertrait_path {
             None => self.sig.ident.clone(),
             Some(path) => {
                 let last = path.segments.last().unwrap();
-                format_ident!("{}_{}", last.ident, self.sig.ident)
+                format_ident!("__{}_{}", last.ident, self.sig.ident)
             }
         }
     }

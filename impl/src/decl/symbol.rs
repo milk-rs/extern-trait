@@ -34,7 +34,7 @@ pub struct Symbol {
 impl Symbol {
     pub fn new(trait_name: String) -> Self {
         let hint = format!(
-            "missing #[extern_trait] impl for trait `{trait_name}` — add an #[extern_trait] impl \
+            "missing #[extern_trait] impl for trait `{trait_name}` - add an #[extern_trait] impl \
              block in the implementing crate",
         );
         Self {

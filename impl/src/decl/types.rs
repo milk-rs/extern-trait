@@ -227,11 +227,7 @@ impl VerifiedSignature {
             ));
         }
         if let Some(abi) = &sig.abi
-            && sig
-                .abi
-                .as_ref()
-                .and_then(|abi| abi.name.as_ref())
-                .is_some_and(|name| name.value() != "Rust")
+            && abi.name.as_ref().is_none_or(|name| name.value() != "Rust")
         {
             return Err(Error::new_spanned(
                 abi,
