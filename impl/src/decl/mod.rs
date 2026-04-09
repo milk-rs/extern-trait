@@ -3,15 +3,45 @@ mod symbol;
 mod types;
 
 use proc_macro2::TokenStream;
-use quote::{ToTokens, format_ident, quote};
-use syn::{Error, ItemTrait, Path, Result, ReturnType, TraitItem, Type, parse_quote};
+use quote::{format_ident, quote};
+use syn::{Error, Ident, ItemTrait, Path, Result, ReturnType, TraitItem, Type, parse_quote};
 
 use self::{
     supertraits::{SupertraitInfo, collect_supertraits},
     symbol::Symbol,
     types::VerifiedSignature,
 };
-use crate::args::{DeclArgs, Proxy};
+use crate::{
+    args::{DeclArgs, Proxy},
+    decl::types::{MaybeSelf, arg_names, make_return_type},
+};
+
+// ---------------------------------------------------------------------------
+// MethodInfo: unified representation for trait + supertrait methods
+// ---------------------------------------------------------------------------
+
+struct MethodInfo {
+    sig: VerifiedSignature,
+    /// `None` for trait's own methods, `Some(path)` for supertrait methods.
+    supertrait_path: Option<Path>,
+}
+
+impl MethodInfo {
+    /// VTable field name: `method` for own methods, `__Trait_method` for supertrait.
+    fn field_name(&self) -> Ident {
+        match &self.supertrait_path {
+            None => self.sig.ident.clone(),
+            Some(path) => {
+                let last = path.segments.last().unwrap();
+                format_ident!("__{}_{}", last.ident, self.sig.ident)
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// ExpandCtx
+// ---------------------------------------------------------------------------
 
 struct ExpandCtx {
     // input
@@ -21,8 +51,7 @@ struct ExpandCtx {
     // parsed
     sym: Symbol,
     copy: bool,
-    // generated
-    macro_items: TokenStream,
+    supertraits: Vec<SupertraitInfo>,
 }
 
 impl ExpandCtx {
@@ -46,252 +75,283 @@ impl ExpandCtx {
             input,
             sym,
             copy: false,
-            macro_items: TokenStream::new(),
+            supertraits: Vec::new(),
         })
     }
 
-    fn emit_method(&self, export_name: &str, method: &VerifiedSignature) -> TokenStream {
-        let proxy_ident = &self.proxy.ident;
-        let proxy: Box<Type> = parse_quote!(#proxy_ident);
+    // -----------------------------------------------------------------------
+    // Collect all methods
+    // -----------------------------------------------------------------------
 
-        let unsafety = method.unsafety;
-        let abi = &method.abi;
-        let ident = &method.ident;
+    fn collect_methods(&mut self) -> Result<Vec<MethodInfo>> {
+        let mut methods = Vec::new();
 
-        let arg_names = method.arg_names().collect::<Vec<_>>();
-        let arg_types = method
-            .inputs
-            .iter()
-            .map(|input| input.to_type(proxy.clone()))
-            .collect::<Vec<_>>();
-        let output = match &method.output {
-            None => ReturnType::Default,
-            Some(output) => ReturnType::Type(parse_quote!(->), output.to_type(proxy.clone())),
-        };
+        // Trait's own methods
+        for item in &self.input.items {
+            let TraitItem::Fn(f) = item else {
+                return Err(Error::new_spanned(
+                    item,
+                    "#[extern_trait] may only contain methods",
+                ));
+            };
+            methods.push(MethodInfo {
+                sig: VerifiedSignature::try_new(&f.sig)?,
+                supertrait_path: None,
+            });
+        }
 
-        quote! {
-            #unsafety #abi fn #ident(#(#arg_names: #arg_types),*) #output {
-                unsafe extern "Rust" {
-                    #[link_name = #export_name]
-                    unsafe fn #ident(#(_: #arg_types),*) #output;
-                }
-                unsafe { #ident(#(#arg_names),*) }
+        // Supertrait methods
+        self.supertraits = collect_supertraits(&self.input.supertraits);
+        for info in &self.supertraits {
+            if info.path.is_ident("Copy") {
+                self.copy = true;
             }
+            for sig in &info.methods {
+                methods.push(MethodInfo {
+                    sig: sig.clone(),
+                    supertrait_path: Some(info.path.clone()),
+                });
+            }
+        }
+
+        Ok(methods)
+    }
+
+    // -----------------------------------------------------------------------
+    // VTable struct generation
+    // -----------------------------------------------------------------------
+
+    fn vtable_ident(&self) -> Ident {
+        format_ident!("__{}VTable", self.input.ident)
+    }
+
+    fn vtable_symbol(&self) -> String {
+        format!("{:#?}", self.sym)
+    }
+
+    /// `extern_trait::Repr` as a syn `Type`.
+    fn repr_type(&self) -> Type {
+        let extern_trait = &self.extern_trait;
+        parse_quote!(#extern_trait::Repr)
+    }
+
+    /// Build a `ReturnType`, replacing by-value `Self` with `Repr`.
+    fn return_type(&self, output: &Option<MaybeSelf>, self_type: &Type) -> ReturnType {
+        if output.as_ref().is_some_and(|o| o.is_self_value()) {
+            let repr = self.repr_type();
+            make_return_type(output, &repr)
+        } else {
+            make_return_type(output, self_type)
         }
     }
 
-    fn emit_export(
-        &self,
-        trait_: Option<&Path>,
-        export_name: &str,
-        method: &VerifiedSignature,
-    ) -> TokenStream {
-        let extern_trait = &self.extern_trait;
-        let repr: Box<Type> = parse_quote!(#extern_trait::Repr);
+    /// Build a fn pointer type for a VTable method field.
+    ///
+    /// `self_type` is substituted for ref/ptr Self. By-value Self uses `Repr`.
+    fn method_fn_type(&self, sig: &VerifiedSignature, self_type: &Type) -> TokenStream {
+        let VerifiedSignature {
+            unsafety,
+            ident: _,
+            inputs,
+            output,
+        } = sig;
 
-        let unsafety = method.unsafety;
-        let ident = &method.ident;
+        let repr = self.repr_type();
 
-        let placeholder: Box<Type> = Box::new(Type::Verbatim(quote!($ty)));
-
-        // Generate arg names: _0, _1, _2, ...
-        let arg_names = (0..method.inputs.len())
-            .map(|i| format_ident!("_{}", i))
-            .collect::<Vec<_>>();
-
-        // For by-value Self parameters, use Repr as the extern function parameter type
-        let arg_types = method
-            .inputs
+        let arg_types: Vec<_> = inputs
             .iter()
             .map(|input| {
                 if input.is_self_value() {
-                    repr.clone()
+                    Box::new(repr.clone())
                 } else {
-                    input.to_type(placeholder.clone())
+                    input.to_type(self_type)
                 }
             })
-            .collect::<Vec<_>>();
+            .collect();
 
-        // For by-value Self parameters, convert from Repr to $ty
-        let call_args = method
-            .inputs
+        let output = self.return_type(output, self_type);
+
+        quote! { #unsafety fn(#(#arg_types),*) #output }
+    }
+
+    /// Emit a `#[repr(C)]` VTable struct definition.
+    ///
+    /// `self_type` is the type substituted for ref/ptr Self and drop pointer.
+    /// By-value Self always uses `Repr`.
+    fn emit_vtable_struct(&self, methods: &[MethodInfo], self_type: &Type) -> TokenStream {
+        let extern_trait = &self.extern_trait;
+        let vtable_ident = self.vtable_ident();
+
+        let method_fields: Vec<_> = methods
             .iter()
-            .zip(&arg_names)
-            .map(|(input, name)| {
-                if input.is_self_value() {
-                    quote!(unsafe { #extern_trait::Repr::into_value::<$ty>(#name) })
-                } else {
-                    quote!(#name)
-                }
+            .map(|m| {
+                let field_name = m.field_name();
+                let fn_type = self.method_fn_type(&m.sig, self_type);
+                quote! { #field_name: #fn_type }
             })
-            .collect::<Vec<_>>();
-
-        let res = quote! { __result };
-
-        let (ret, output) = match &method.output {
-            // For by-value Self return, wrap result in Repr::from_value and use Repr as return type
-            Some(output) if output.is_self_value() => (
-                quote! { unsafe { #extern_trait::Repr::from_value(#res) } },
-                ReturnType::Type(parse_quote!(->), repr.clone()),
-            ),
-            Some(output) => (
-                res.clone(),
-                ReturnType::Type(parse_quote!(->), output.to_type(placeholder.clone())),
-            ),
-            None => (res.clone(), ReturnType::Default),
-        };
-
-        let trait_name = trait_.map_or_else(|| quote!($trait), |t| quote!(#t));
+            .collect();
 
         quote! {
-            const _: () = {
-                #[unsafe(export_name = #export_name)]
-                fn #ident(#(#arg_names: #arg_types),*) #output {
-                    let #res = #unsafety {
-                        <$ty as #trait_name>::#ident(#(#call_args),*)
-                    };
-                    #ret
-                }
-            };
+            #[repr(C)]
+            #[allow(non_snake_case)]
+            struct #vtable_ident {
+                typeid: #extern_trait::__private::ConstTypeId,
+                drop: unsafe fn(*mut #self_type),
+                #(#method_fields),*
+            }
         }
     }
 
-    fn expand_trait_impl(&mut self) -> Result<TokenStream> {
+    // -----------------------------------------------------------------------
+    // Proxy-side: extern static + trait/supertrait impls
+    // -----------------------------------------------------------------------
+
+    fn emit_extern_vtable(&self) -> TokenStream {
+        let vtable_ident = self.vtable_ident();
+        let vtable_symbol = self.vtable_symbol();
+
+        quote! {
+            unsafe extern "Rust" {
+                #[link_name = #vtable_symbol]
+                safe static VT: #vtable_ident;
+            }
+        }
+    }
+
+    fn emit_trait_impl(&self, methods: &[MethodInfo]) -> TokenStream {
         let proxy_ident = &self.proxy.ident;
         let trait_ident = &self.input.ident;
 
-        let trait_methods = self
-            .input
-            .items
+        let impl_methods: Vec<_> = methods
             .iter()
-            .map(|item| {
-                let TraitItem::Fn(f) = item else {
-                    return Err(Error::new_spanned(
-                        item,
-                        "#[extern_trait] may only contain methods",
-                    ));
-                };
-                VerifiedSignature::try_new(&f.sig)
-            })
-            .collect::<Result<Vec<_>>>()?;
+            .filter(|m| m.supertrait_path.is_none())
+            .map(|m| self.emit_method_body(m))
+            .collect();
 
-        let mut impl_methods = TokenStream::new();
-
-        for method in &trait_methods {
-            let export_name = format!("{:?}", self.sym.clone().with_name(method.ident.to_string()));
-            impl_methods.extend(self.emit_method(&export_name, method));
-            self.macro_items
-                .extend(self.emit_export(None, &export_name, method));
-        }
-
-        Ok(quote! {
+        quote! {
             impl #trait_ident for #proxy_ident {
-                #impl_methods
+                #(#impl_methods)*
             }
-        })
+        }
     }
 
-    fn expand_supertrait_impls(&mut self) -> TokenStream {
+    fn emit_supertrait_impls(&self, methods: &[MethodInfo]) -> TokenStream {
         let proxy_ident = &self.proxy.ident;
+        let mut impls = TokenStream::new();
 
-        let supertraits = collect_supertraits(&self.input.supertraits);
-        let mut supertrait_impls = TokenStream::new();
-
-        for info in &supertraits {
-            let mut supertrait_impl = TokenStream::new();
-
+        for info in &self.supertraits {
             let SupertraitInfo {
                 is_unsafe,
                 path,
-                methods,
+                methods: _,
             } = info;
 
-            if path.is_ident("Copy") {
-                self.copy = true;
-            }
-
-            for method in methods {
-                let export_name = format!(
-                    "{:?}",
-                    self.sym.clone().with_name(format!(
-                        "{}::{}",
-                        path.to_token_stream(),
-                        method.ident
-                    ))
-                );
-                supertrait_impl.extend(self.emit_method(&export_name, method));
-                self.macro_items
-                    .extend(self.emit_export(Some(path), &export_name, method));
-            }
+            let supertrait_methods: Vec<_> = methods
+                .iter()
+                .filter(|m| m.supertrait_path.as_ref().is_some_and(|p| p == path))
+                .map(|m| self.emit_method_body(m))
+                .collect();
 
             let unsafety = is_unsafe.then(|| quote! { unsafe });
 
-            supertrait_impls.extend(quote! {
+            impls.extend(quote! {
                 #unsafety impl #path for #proxy_ident {
-                    #supertrait_impl
+                    #(#supertrait_methods)*
                 }
             });
         }
 
-        supertrait_impls
+        impls
     }
 
-    fn expand_drop_impl(&mut self) -> TokenStream {
+    /// Generate a single method body that calls through the VTable.
+    fn emit_method_body(&self, method: &MethodInfo) -> TokenStream {
+        let extern_trait = &self.extern_trait;
         let proxy_ident = &self.proxy.ident;
-        let drop_name = format!("{:?}", self.sym.clone().with_name("drop"));
+        let proxy_type: Type = parse_quote!(#proxy_ident);
 
-        self.macro_items.extend(quote! {
-            const _: () = {
-                #[unsafe(export_name = #drop_name)]
-                unsafe fn drop(this: *mut $ty) {
-                    unsafe { ::core::ptr::drop_in_place(this) };
+        let VerifiedSignature {
+            unsafety,
+            ident,
+            inputs,
+            output,
+        } = &method.sig;
+
+        let arg_names: Vec<_> = arg_names(inputs);
+        let arg_types: Vec<_> = inputs
+            .iter()
+            .map(|input| input.to_type(&proxy_type))
+            .collect();
+
+        // Convert by-value Self args: ProxyType → Repr (transparent transmute)
+        let call_args: Vec<_> = inputs
+            .iter()
+            .zip(&arg_names)
+            .map(|(input, name)| {
+                if input.is_self_value() {
+                    quote!(unsafe { #extern_trait::Repr::from_value(#name) })
+                } else {
+                    quote!(#name)
                 }
-            };
-        });
+            })
+            .collect();
+
+        let field_name = method.field_name();
+        let body = quote! { (VT.#field_name)(#(#call_args),*) };
+
+        // Wrap Repr result back to ProxyType if by-value Self return
+        let body = if output.as_ref().is_some_and(|o| o.is_self_value()) {
+            quote! { #proxy_ident(#body) }
+        } else {
+            body
+        };
+
+        let output = make_return_type(output, &proxy_type);
+
+        quote! {
+            #unsafety fn #ident(#(#arg_names: #arg_types),*) #output {
+                #body
+            }
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Drop impl
+    // -----------------------------------------------------------------------
+
+    fn emit_drop_impl(&self) -> TokenStream {
+        let proxy_ident = &self.proxy.ident;
 
         quote! {
             impl Drop for #proxy_ident {
                 fn drop(&mut self) {
-                    unsafe extern "Rust" {
-                        #[link_name = #drop_name]
-                        unsafe fn drop(this: *mut #proxy_ident);
-                    }
-                    unsafe { drop(self) }
+                    unsafe { (VT.drop)(self) }
                 }
             }
         }
     }
 
-    fn expand_cast_impl(&mut self) -> TokenStream {
+    // -----------------------------------------------------------------------
+    // Cast methods (from_impl, into_impl, downcast_ref, downcast_mut)
+    // -----------------------------------------------------------------------
+
+    fn emit_cast_impl(&self) -> TokenStream {
         let extern_trait = &self.extern_trait;
         let proxy_ident = &self.proxy.ident;
         let trait_ident = &self.input.ident;
 
-        let typeid_name = format!("{:?}", self.sym.clone().with_name("typeid"));
         let panic_doc = format!(
             "# Panics\nPanics if the type parameter `T` is not an implementation type for \
              #[extern_trait] `{}`.",
             trait_ident
         );
 
-        self.macro_items.extend(quote! {
-            const _: () = {
-                #[unsafe(export_name = #typeid_name)]
-                static TYPEID: #extern_trait::__private::ConstTypeId =
-                    #extern_trait::__private::ConstTypeId::of::<$ty>();
-            };
-        });
-
         quote! {
             impl #proxy_ident {
                 fn assert_type_is_impl<T: #trait_ident>() {
-                    unsafe extern "Rust" {
-                        #[link_name = #typeid_name]
-                        safe static TYPEID: #extern_trait::__private::ConstTypeId;
-                    }
                     let typeid = #extern_trait::__private::ConstTypeId::of::<T>();
                     assert!(
-                        typeid == TYPEID,
+                        typeid == VT.typeid,
                         "`{}` is not an implementation type for #[extern_trait] `{}`",
                         ::core::any::type_name::<T>(),
                         stringify!(#trait_ident)
@@ -333,19 +393,33 @@ impl ExpandCtx {
         }
     }
 
-    fn expand_macro_rules(&mut self) -> TokenStream {
-        let trait_ident = &self.input.ident;
+    // -----------------------------------------------------------------------
+    // Impl-side: macro_rules with VTable struct + static init
+    // -----------------------------------------------------------------------
 
+    fn emit_macro_rules(&self, methods: &[MethodInfo]) -> TokenStream {
+        let trait_ident = &self.input.ident;
         let macro_ident = format_ident!("__extern_trait_{}", trait_ident);
-        let macro_content = &self.macro_items;
         let vis = &self.input.vis;
+
+        let vtable_ident = self.vtable_ident();
+        let vtable_symbol = self.vtable_symbol();
+
+        let placeholder: Type = Type::Verbatim(quote!($ty));
+        let vtable_struct = self.emit_vtable_struct(methods, &placeholder);
+        let vtable_init = self.emit_vtable_init(methods, &placeholder);
 
         quote! {
             #[doc(hidden)]
             #[macro_export]
             macro_rules! #macro_ident {
                 ($trait:path: $ty:ty) => {
-                    #macro_content
+                    const _: () = {
+                        #vtable_struct
+
+                        #[unsafe(export_name = #vtable_symbol)]
+                        static VT: #vtable_ident = #vtable_init;
+                    };
                 };
             }
 
@@ -355,28 +429,151 @@ impl ExpandCtx {
         }
     }
 
+    /// Generate the VTable static initializer expression.
+    fn emit_vtable_init(&self, methods: &[MethodInfo], self_type: &Type) -> TokenStream {
+        let extern_trait = &self.extern_trait;
+        let vtable_ident = self.vtable_ident();
+
+        let method_inits: Vec<_> = methods
+            .iter()
+            .map(|m| {
+                let field_name = m.field_name();
+                let init = self.emit_vtable_field_init(m, self_type);
+                quote! { #field_name: #init }
+            })
+            .collect();
+
+        quote! {
+            #vtable_ident {
+                typeid: #extern_trait::__private::ConstTypeId::of::<$ty>(),
+                drop: |this: *mut $ty| unsafe { ::core::ptr::drop_in_place(this) },
+                #(#method_inits),*
+            }
+        }
+    }
+
+    /// Generate a single VTable field initializer closure for the impl side.
+    fn emit_vtable_field_init(&self, method: &MethodInfo, self_type: &Type) -> TokenStream {
+        let extern_trait = &self.extern_trait;
+
+        let MethodInfo {
+            sig,
+            supertrait_path,
+        } = method;
+        let VerifiedSignature {
+            unsafety,
+            ident,
+            inputs,
+            output,
+        } = sig;
+
+        let repr = self.repr_type();
+
+        // Parameter names: _0, _1, _2, ...
+        let arg_names: Vec<_> = (0..inputs.len()).map(|i| format_ident!("_{}", i)).collect();
+
+        // Parameter types (same mapping as VTable struct fields)
+        let arg_types: Vec<_> = inputs
+            .iter()
+            .map(|input| {
+                if input.is_self_value() {
+                    Box::new(repr.clone())
+                } else {
+                    input.to_type(self_type)
+                }
+            })
+            .collect();
+
+        // Convert arguments: by-value Self → Repr::into_value, otherwise pass through
+        let call_args: Vec<_> = inputs
+            .iter()
+            .zip(&arg_names)
+            .map(|(input, name)| {
+                if input.is_self_value() {
+                    quote!(unsafe { #extern_trait::Repr::into_value::<$ty>(#name) })
+                } else {
+                    quote!(#name)
+                }
+            })
+            .collect();
+
+        // Trait path for qualified call
+        let trait_name = match &supertrait_path {
+            None => quote!($trait),
+            Some(path) => quote!(#path),
+        };
+
+        let body = quote! {
+            #unsafety { <$ty as #trait_name>::#ident(#(#call_args),*) }
+        };
+
+        let body = if output.as_ref().is_some_and(|o| o.is_self_value()) {
+            quote! {
+                let __result = #body;
+                unsafe { #extern_trait::Repr::from_value(__result) }
+            }
+        } else {
+            body
+        };
+
+        quote! {
+            |#(#arg_names: #arg_types),*| {
+                #body
+            }
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Top-level expand
+    // -----------------------------------------------------------------------
+
     fn expand(&mut self) -> Result<TokenStream> {
-        let trait_impl = self.expand_trait_impl()?;
-        let supertrait_impls = self.expand_supertrait_impls();
-        let drop_impl = (!self.copy).then(|| self.expand_drop_impl());
-        let cast_impl = self.expand_cast_impl();
-        let macro_rules = self.expand_macro_rules();
+        let methods = self.collect_methods()?;
 
         let input = &self.input;
         let proxy = self.proxy.expand(&self.extern_trait);
+
+        // Proxy-side vtable struct
+        let proxy_ident = &self.proxy.ident;
+        let proxy_type: Type = parse_quote!(#proxy_ident);
+        let vtable_struct = self.emit_vtable_struct(&methods, &proxy_type);
+
+        // Extern vtable declaration
+        let extern_vtable = self.emit_extern_vtable();
+
+        // Trait impl
+        let trait_impl = self.emit_trait_impl(&methods);
+
+        // Supertrait impls
+        let supertrait_impls = self.emit_supertrait_impls(&methods);
+
+        // Drop impl (skip for Copy types)
+        let drop_impl = (!self.copy).then(|| self.emit_drop_impl());
+
+        // Cast methods
+        let cast_impl = self.emit_cast_impl();
+
+        // macro_rules
+        let macro_rules = self.emit_macro_rules(&methods);
 
         Ok(quote! {
             #input
 
             #proxy
 
-            #trait_impl
+            const _: () = {
+                #vtable_struct
 
-            #supertrait_impls
+                #extern_vtable
 
-            #drop_impl
+                #trait_impl
 
-            #cast_impl
+                #supertrait_impls
+
+                #drop_impl
+
+                #cast_impl
+            };
 
             #macro_rules
         })
