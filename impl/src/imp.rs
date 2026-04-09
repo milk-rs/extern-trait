@@ -23,14 +23,21 @@ pub fn expand(args: ImplArgs, input: ItemImpl) -> Result<TokenStream> {
         ));
     }
 
-    let extern_trait = args.extern_trait;
+    let _ = args.extern_trait;
+    let repr_type = &args.repr_type;
+    let ptr_count = args.repr_type.ptr_count();
+    let ptr_count_desc = ptr_count.to_string();
     let ty = &input.self_ty;
 
     let assert = quote_spanned! {ty.span()=>
         const _: () = {
             assert!(
-                ::core::mem::size_of::<#ty>() <= ::core::mem::size_of::<#extern_trait::Repr>(),
-                concat!(stringify!(#ty), " is too large to be used with #[extern_trait]")
+                ::core::mem::size_of::<#ty>() <= ::core::mem::size_of::<#repr_type>(),
+                concat!(
+                    stringify!(#ty),
+                    " is too large to be used with #[extern_trait] where ptr_count=",
+                    #ptr_count_desc,
+                )
             );
         };
     };
@@ -40,6 +47,6 @@ pub fn expand(args: ImplArgs, input: ItemImpl) -> Result<TokenStream> {
 
         #assert
 
-        #trait_!(#trait_: #ty);
+        #trait_!(#trait_: #ty, ptr_count = #ptr_count);
     })
 }
