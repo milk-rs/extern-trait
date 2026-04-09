@@ -159,6 +159,7 @@ impl ExpandCtx {
     fn expand_trait_impl(&mut self) -> Result<TokenStream> {
         let proxy_ident = &self.proxy.ident;
         let trait_ident = &self.input.ident;
+        let unsafety = self.input.unsafety;
 
         let trait_methods = self
             .input
@@ -185,7 +186,7 @@ impl ExpandCtx {
         }
 
         Ok(quote! {
-            impl #trait_ident for #proxy_ident {
+            #unsafety impl #trait_ident for #proxy_ident {
                 #impl_methods
             }
         })

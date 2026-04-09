@@ -1,0 +1,11 @@
+error[E0200]: the trait `UnsafeTrait` requires an `unsafe impl` declaration
+  --> tests/ui/fail/unsafe_trait.rs:11:1
+   |
+11 | impl UnsafeTrait for UnsafeImpl {}
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: the trait `UnsafeTrait` enforces invariants that the compiler can't check. Review the trait documentation and make sure this implementation upholds those invariants before adding the `unsafe` keyword
+help: add `unsafe` to this trait implementation
+   |
+11 | unsafe impl UnsafeTrait for UnsafeImpl {}
+   | ++++++
