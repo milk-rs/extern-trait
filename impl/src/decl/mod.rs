@@ -221,6 +221,7 @@ impl ExpandCtx {
     fn emit_trait_impl(&self, methods: &[MethodInfo]) -> TokenStream {
         let proxy_ident = &self.proxy.ident;
         let trait_ident = &self.input.ident;
+        let unsafety = self.input.unsafety;
 
         let impl_methods: Vec<_> = methods
             .iter()
@@ -229,7 +230,7 @@ impl ExpandCtx {
             .collect();
 
         quote! {
-            impl #trait_ident for #proxy_ident {
+            #unsafety impl #trait_ident for #proxy_ident {
                 #(#impl_methods)*
             }
         }
