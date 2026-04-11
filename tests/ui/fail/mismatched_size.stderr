@@ -1,0 +1,24 @@
+error[E0308]: mismatched types
+  --> tests/ui/fail/mismatched_size.rs:12:14
+   |
+12 |         Self([0; 3])
+   |         ---- ^^^^^^ expected an array with a size of 2, found one with a size of 3
+   |         |
+   |         arguments to this function are incorrect
+   |
+note: tuple struct defined here
+  --> tests/ui/fail/mismatched_size.rs:8:8
+   |
+ 8 | struct MismatchedSize([usize; 2]);
+   |        ^^^^^^^^^^^^^^
+
+error[E0080]: evaluation panicked: #[extern_trait] MismatchedSizeApi declared with ptr_count=3, but impl for MismatchedSize has ptr_count=2
+ --> tests/ui/fail/mismatched_size.rs:3:28
+  |
+3 | #[extern_trait(ptr_count = 3, MismatchedSizeProxy)]
+  |                            ^ evaluation of `_` failed here
+...
+9 | #[extern_trait(ptr_count = 2)]
+  | ------------------------------ in this attribute macro expansion
+  |
+  = note: this error originates in the macro `$crate::panic::panic_2021` which comes from the expansion of the attribute macro `extern_trait` (in Nightly builds, run with -Z macro-backtrace for more info)
