@@ -1,20 +1,21 @@
 use std::fmt::{Display, Formatter};
 
-use proc_macro2::TokenStream;
+use proc_macro2::{Span, TokenStream};
 use quote::{ToTokens, quote};
 use syn::{
     Attribute, Ident, Path, Token, Type, Visibility,
     parse::{Parse, ParseStream, Result},
     parse_quote,
+    spanned::Spanned,
 };
 
 use crate::utils::ParsedLitInt;
 
-/// The integer `ptr_count`, resulting from calling [ReprType::ptr_count].
+/// The integer `ptr_count`, resulting from calling [SizedReprType::ptr_count].
 ///
 /// This is a different type from `TokenStream` mainly so that our `Display` impl
 /// can avoid the spaces that `TokenStream` display adds.
-pub struct ExpandedPtrCount<'a>(&'a ReprType);
+pub struct ExpandedPtrCount<'a>(&'a SizedReprType);
 impl ToTokens for ExpandedPtrCount<'_> {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         tokens.extend(self.to_token_stream())
@@ -44,27 +45,53 @@ impl Display for ExpandedPtrCount<'_> {
 }
 
 #[derive(Clone)]
-pub struct ReprType {
-    pub extern_trait: Path,
-    pub ptr_count: Option<ParsedLitInt<usize>>,
+pub enum ReprType {
+    Sized(SizedReprType),
+    Unsized { extern_trait: Path },
 }
 impl ReprType {
-    pub fn ptr_count(&self) -> ExpandedPtrCount<'_> {
-        ExpandedPtrCount(self)
-    }
     pub fn to_syn_type(&self) -> Type {
         parse_quote!(#self)
     }
 }
 impl Default for ReprType {
     fn default() -> Self {
-        ReprType {
+        ReprType::Sized(SizedReprType::default())
+    }
+}
+impl ToTokens for ReprType {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        tokens.extend(self.to_token_stream())
+    }
+    fn to_token_stream(&self) -> TokenStream {
+        match self {
+            ReprType::Sized(sized) => sized.to_token_stream(),
+            ReprType::Unsized { extern_trait } => {
+                quote!(#extern_trait::ReprUnsized)
+            }
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct SizedReprType {
+    pub extern_trait: Path,
+    pub ptr_count: Option<ParsedLitInt<usize>>,
+}
+impl SizedReprType {
+    pub fn ptr_count(&self) -> ExpandedPtrCount<'_> {
+        ExpandedPtrCount(self)
+    }
+}
+impl Default for SizedReprType {
+    fn default() -> Self {
+        SizedReprType {
             extern_trait: parse_quote!(::extern_trait),
             ptr_count: None,
         }
     }
 }
-impl ToTokens for ReprType {
+impl ToTokens for SizedReprType {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         tokens.extend(self.to_token_stream())
     }
@@ -120,7 +147,7 @@ impl Parse for DeclArgs {
 
         Ok(DeclArgs {
             extern_trait: kwargs.extern_trait(),
-            repr_type: kwargs.repr_type(),
+            repr_type: kwargs.parse_repr_type()?,
             proxy,
         })
     }
@@ -132,7 +159,7 @@ impl Parse for ImplArgs {
 
         Ok(ImplArgs {
             extern_trait: kwargs.extern_trait(),
-            repr_type: kwargs.repr_type(),
+            repr_type: kwargs.parse_repr_type()?,
         })
     }
 }
@@ -157,6 +184,7 @@ mod kw {
 struct SharedKeywordArgs {
     pub crate_path: Option<Path>,
     pub ptr_count: Option<ParsedLitInt<usize>>,
+    pub is_unsized: Option<Span>,
 }
 impl SharedKeywordArgs {
     fn is_empty(&self) -> bool {
@@ -164,14 +192,35 @@ impl SharedKeywordArgs {
             self,
             SharedKeywordArgs {
                 crate_path: None,
-                ptr_count: None
+                ptr_count: None,
+                is_unsized: None,
             }
         )
     }
-    fn repr_type(&self) -> ReprType {
-        ReprType {
-            extern_trait: self.extern_trait(),
-            ptr_count: self.ptr_count.clone(),
+    fn parse_repr_type(&self) -> Result<ReprType> {
+        let extern_trait = self.extern_trait();
+        match self {
+            Self {
+                is_unsized: None,
+                ptr_count,
+                ..
+            } => Ok(ReprType::Sized(SizedReprType {
+                extern_trait,
+                ptr_count: ptr_count.clone(),
+            })),
+            Self {
+                is_unsized: Some(_),
+                ptr_count: None,
+                ..
+            } => Ok(ReprType::Unsized { extern_trait }),
+            Self {
+                is_unsized: Some(span1),
+                ptr_count: Some(_),
+                ..
+            } => Err(syn::Error::new(
+                *span1,
+                "The `unsized` flag conflicts with `ptr_count = ...`",
+            )),
         }
     }
     fn extern_trait(&self) -> Path {
@@ -181,18 +230,27 @@ impl SharedKeywordArgs {
     }
     fn parse_single(&self, input: ParseStream) -> Result<Option<Self>> {
         macro_rules! do_parse {
+            ($field:ident, $desc:literal, ($($kw:tt)*), $parse:block) => {
+                do_parse!(@shared $field, concat!($desc, " flags"), ($($kw)*), |_kw| {
+                    input.parse::<Token![=]>()?;
+                    $parse
+                })
+            };
+            ($field:ident, $desc:literal, flag ($($kw:tt)*)) => {
+                do_parse!(@shared $field, concat!($desc, " arguments"), ($($kw)*), flag => true, |kw| {
+                    kw.span()
+                })
+            };
             // the `$kw` must be wrapped in parens so that it is parsed as a tt
             // it must be parsed as a tt since it is used as both expr and ty
-            ($field:ident, $desc:literal, ($($kw:tt)*), $parse:block) => {
-                // need to
-                if input.peek($($kw)*) && input.peek2(Token![=]) {
-                    let kw = input.parse::<$($kw)*>()?;
-                    input.parse::<Token![=]>()?;
+            (@shared $field:ident, $desc:expr, ($($kw:tt)*), $(flag => $flag:literal,)? |$kw_name:ident| $parse:block) => {
+                if input.peek($($kw)*) && ($($flag ||)* input.peek2(Token![=])) {
+                    let $kw_name = input.parse::<$($kw)*>()?;
                     let res = $parse;
                     return if self.$field.is_some() {
                         Err(syn::Error::new_spanned(
-                            kw,
-                            format_args!("Conflicting {} arguments", $desc),
+                            $kw_name,
+                            format_args!("Conflicting {}", $desc),
                         ))
                     } else {
                         Ok(Some(Self {
@@ -203,12 +261,13 @@ impl SharedKeywordArgs {
                 }
             };
         }
-        do_parse!(crate_path, "crate path", (Token![crate]), {
+        do_parse!(crate_path, "`path`", (Token![crate]), {
             input.call(Path::parse_mod_style)?
         });
-        do_parse!(ptr_count, "ptr count (size)", (kw::ptr_count), {
+        do_parse!(ptr_count, "`ptr_count` (size)", (kw::ptr_count), {
             input.parse::<ParsedLitInt<usize>>()?
         });
+        do_parse!(is_unsized, "`unsized`", flag(Token![unsized]));
         Ok(None)
     }
 }

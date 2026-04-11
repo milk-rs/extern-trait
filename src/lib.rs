@@ -72,7 +72,6 @@ unsafe extern "C" {
     type NeverOwned;
 }
 
-
 /// Used to store implementation types in proxy structs
 /// when the `unsized` flag is used.
 ///

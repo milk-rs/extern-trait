@@ -9,7 +9,7 @@ use syn::{Error, parse_macro_input};
 
 #[proc_macro_attribute]
 pub fn extern_trait(args: TokenStream, input: TokenStream) -> TokenStream {
-    if args.is_empty() {
+    let x = if args.is_empty() {
         imp::expand(
             ImplArgs {
                 extern_trait: syn::parse_quote!(::extern_trait),
@@ -30,5 +30,7 @@ pub fn extern_trait(args: TokenStream, input: TokenStream) -> TokenStream {
         }
     }
     .unwrap_or_else(Error::into_compile_error)
-    .into()
+    .into();
+    // panic!("{x}");
+    x
 }

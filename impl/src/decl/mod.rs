@@ -353,18 +353,8 @@ impl ExpandCtx {
             trait_ident
         );
 
-        quote! {
-            impl #proxy_ident {
-                fn assert_type_is_impl<T: #trait_ident>() {
-                    let typeid = #extern_trait::__private::ConstTypeId::of::<T>();
-                    assert!(
-                        typeid == VT.typeid,
-                        "`{}` is not an implementation type for #[extern_trait] `{}`",
-                        ::core::any::type_name::<T>(),
-                        stringify!(#trait_ident)
-                    );
-                }
-
+        let sized_casts = if matches!(repr_type, ReprType::Sized(_)) {
+            quote! {
                 /// Convert the proxy type from the implementation type.
                 #[doc = #panic_doc]
                 pub fn from_impl<T: #trait_ident>(value: T) -> Self {
@@ -382,6 +372,24 @@ impl ExpandCtx {
                         )
                     }
                 }
+            }
+        } else {
+            quote!()
+        };
+
+        quote! {
+            impl #proxy_ident {
+                fn assert_type_is_impl<T: #trait_ident>() {
+                    let typeid = #extern_trait::__private::ConstTypeId::of::<T>();
+                    assert!(
+                        typeid == VT.typeid,
+                        "`{}` is not an implementation type for #[extern_trait] `{}`",
+                        ::core::any::type_name::<T>(),
+                        stringify!(#trait_ident)
+                    );
+                }
+
+                #sized_casts
 
                 /// Returns a reference to the implementation type.
                 #[doc = #panic_doc]
@@ -417,8 +425,8 @@ impl ExpandCtx {
         let vtable_init = self.emit_vtable_init(methods, &placeholder);
 
         // size assertion, quoted to point to `ptr_count` expression
-        let size_assertion: TokenStream = {
-            let expected_ptr_count = &self.repr_type.ptr_count();
+        let size_assertion: TokenStream = if let ReprType::Sized(ref repr_type) = self.repr_type {
+            let expected_ptr_count = repr_type.ptr_count();
             let assert_msg1 = format!(
                 "#[extern_trait] {trait_ident} declared with ptr_count={expected_ptr_count}, but \
                  impl for ",
@@ -434,21 +442,53 @@ impl ExpandCtx {
                     )
                 );
             }
+        } else {
+            quote!()
         };
+        let common = quote! {
+            #vtable_struct
+
+            #[unsafe(export_name = #vtable_symbol)]
+            static VT: #vtable_ident = #vtable_init;
+        };
+        let sized_case: TokenStream;
+        let unsized_case: TokenStream;
+        match self.repr_type {
+            ReprType::Sized(ref repr_type) => {
+                let unsized_msg = format!(
+                    "Expected ptr_count={} for {trait_ident}, but got `unsized` flag",
+                    repr_type.ptr_count()
+                );
+                unsized_case = quote!(compile_error!(#unsized_msg));
+                sized_case = quote!(#size_assertion);
+            }
+            ReprType::Unsized { .. } => {
+                let unsized_msg = format!(
+                    "Expected impl for {trait_ident} to have `unsized` flag, but instead has \
+                     ptr_count = "
+                );
+                sized_case = quote!(compile_error!(
+                    concat!(#unsized_msg, stringify!($actual_ptr_count))
+                ));
+                unsized_case = quote! {};
+            }
+        }
         quote! {
             #[doc(hidden)]
             #[macro_export]
             macro_rules! #macro_ident {
                 ($trait:path: $ty:ty, ptr_count = $actual_ptr_count:expr) => {
                     const _: () = {
-                        #vtable_struct
-
-                        #size_assertion
-
-                        #[unsafe(export_name = #vtable_symbol)]
-                        static VT: #vtable_ident = #vtable_init;
+                        #sized_case
+                        #common
                     };
                 };
+                ($trait:path: $ty:ty, unsized) => {
+                    const _: () = {
+                        #unsized_case
+                        #common
+                    };
+                }
             }
 
             #[doc(hidden)]

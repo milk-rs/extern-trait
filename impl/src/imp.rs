@@ -2,7 +2,7 @@ use proc_macro2::{Span, TokenStream};
 use quote::{quote, quote_spanned};
 use syn::{ItemImpl, Result, spanned::Spanned};
 
-use crate::args::ImplArgs;
+use crate::args::{ImplArgs, ReprType};
 
 pub fn expand(args: ImplArgs, input: ItemImpl) -> Result<TokenStream> {
     let Some((_, trait_, _)) = &input.trait_ else {
@@ -25,28 +25,39 @@ pub fn expand(args: ImplArgs, input: ItemImpl) -> Result<TokenStream> {
 
     let _ = args.extern_trait;
     let repr_type = &args.repr_type;
-    let ptr_count = args.repr_type.ptr_count();
-    let ptr_count_desc = ptr_count.to_string();
     let ty = &input.self_ty;
 
-    let assert = quote_spanned! {ty.span()=>
-        const _: () = {
-            assert!(
-                ::core::mem::size_of::<#ty>() <= ::core::mem::size_of::<#repr_type>(),
-                concat!(
-                    stringify!(#ty),
-                    " is too large to be used with #[extern_trait] where ptr_count=",
-                    #ptr_count_desc,
-                )
-            );
-        };
+    let assert = if let ReprType::Sized(repr_type) = repr_type {
+        // kept at awkward indent level to minimize diff
+        let ptr_count_desc = repr_type.ptr_count().to_string();
+        quote_spanned! {ty.span()=>
+            const _: () = {
+                assert!(
+                    ::core::mem::size_of::<#ty>() <= ::core::mem::size_of::<#repr_type>(),
+                    concat!(
+                        stringify!(#ty),
+                        " is too large to be used with #[extern_trait] where ptr_count=",
+                        #ptr_count_desc,
+                    )
+                );
+            };
+        }
+    } else {
+        quote!()
     };
 
+    let size_spec = match repr_type {
+        ReprType::Sized(repr_type) => {
+            let ptr_count = repr_type.ptr_count();
+            quote!(ptr_count = #ptr_count)
+        }
+        ReprType::Unsized { .. } => quote!(unsized),
+    };
     Ok(quote! {
         #input
 
         #assert
 
-        #trait_!(#trait_: #ty, ptr_count = #ptr_count);
+        #trait_!(#trait_: #ty, #size_spec);
     })
 }

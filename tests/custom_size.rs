@@ -17,3 +17,16 @@ impl UnsizedMarker for ZeroSize {
         3
     }
 }
+
+#[extern_trait(unsized, UnsizedProxy)]
+pub trait UnsizedTrait {
+    fn is_happy(&self) -> bool;
+}
+
+pub struct Huge([u8; 4096]);
+#[extern_trait(unsized)]
+impl UnsizedTrait for Huge {
+    fn is_happy(&self) -> bool {
+        self.0[28] > 3
+    }
+}
