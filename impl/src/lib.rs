@@ -1,17 +1,19 @@
 mod args;
 mod decl;
 mod imp;
+mod utils;
 
-use args::{DeclArgs, ImplArgs};
+use args::{DeclArgs, ImplArgs, ReprType};
 use proc_macro::TokenStream;
 use syn::{Error, parse_macro_input};
 
 #[proc_macro_attribute]
 pub fn extern_trait(args: TokenStream, input: TokenStream) -> TokenStream {
-    if args.is_empty() {
+    let x = if args.is_empty() {
         imp::expand(
             ImplArgs {
                 extern_trait: syn::parse_quote!(::extern_trait),
+                repr_type: ReprType::default(),
             },
             parse_macro_input!(input),
         )
@@ -28,5 +30,7 @@ pub fn extern_trait(args: TokenStream, input: TokenStream) -> TokenStream {
         }
     }
     .unwrap_or_else(Error::into_compile_error)
-    .into()
+    .into();
+    // panic!("{x}");
+    x
 }
