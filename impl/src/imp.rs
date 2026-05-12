@@ -32,6 +32,10 @@ pub fn expand(args: ImplArgs, input: ItemImpl) -> Result<TokenStream> {
                 ::core::mem::size_of::<#ty>() <= ::core::mem::size_of::<#extern_trait::Repr>(),
                 concat!(stringify!(#ty), " is too large to be used with #[extern_trait]")
             );
+            assert!(
+                ::core::mem::align_of::<#ty>() <= ::core::mem::align_of::<#extern_trait::Repr>(),
+                concat!(stringify!(#ty), " requires stricter alignment than #[extern_trait] can provide")
+            );
         };
     };
 
