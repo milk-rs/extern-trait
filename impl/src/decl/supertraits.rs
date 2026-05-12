@@ -171,7 +171,7 @@ fn match_supertrait(path: &Path) -> Option<SupertraitInfo> {
 pub fn collect_supertraits(
     supertraits: &Punctuated<TypeParamBound, Token![+]>,
 ) -> Vec<SupertraitInfo> {
-    supertraits
+    let mut infos = supertraits
         .iter()
         .filter_map(|bound| {
             if let TypeParamBound::Trait(t) = bound
@@ -184,5 +184,13 @@ pub fn collect_supertraits(
                 None
             }
         })
-        .collect()
+        .collect::<Vec<_>>();
+
+    if infos.iter().any(|info| info.path.is_ident("Copy"))
+        && !infos.iter().any(|info| info.path.is_ident("Clone"))
+    {
+        infos.push(match_supertrait(&parse_quote!(Clone)).unwrap());
+    }
+
+    infos
 }
