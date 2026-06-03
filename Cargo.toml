@@ -28,3 +28,7 @@ typeid = "1"
 
 [dev-dependencies]
 trybuild = "1"
+
+[features]
+# Make `ReprUnsized` actually unsized, by using the nightly "extern types" feature
+nightly-unsized = []
