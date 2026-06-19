@@ -3,8 +3,11 @@ mod symbol;
 mod types;
 
 use proc_macro2::TokenStream;
-use quote::{format_ident, quote};
-use syn::{Error, Ident, ItemTrait, Path, Result, ReturnType, TraitItem, Type, parse_quote};
+use quote::{format_ident, quote, quote_spanned};
+use syn::{
+    Error, Ident, ItemTrait, Path, Result, ReturnType, TraitItem, Type, parse_quote,
+    spanned::Spanned,
+};
 
 use self::{
     supertraits::{SupertraitInfo, collect_supertraits},
@@ -12,10 +15,9 @@ use self::{
     types::VerifiedSignature,
 };
 use crate::{
-    args::{DeclArgs, Proxy},
+    args::{DeclArgs, Proxy, ReprType},
     decl::types::{MaybeSelf, arg_names, make_return_type},
 };
-
 // ---------------------------------------------------------------------------
 // MethodInfo: unified representation for trait + supertrait methods
 // ---------------------------------------------------------------------------
@@ -46,6 +48,7 @@ impl MethodInfo {
 struct ExpandCtx {
     // input
     extern_trait: Path,
+    repr_type: ReprType,
     proxy: Proxy,
     input: ItemTrait,
     // parsed
@@ -66,6 +69,7 @@ impl ExpandCtx {
         let DeclArgs {
             extern_trait,
             proxy,
+            repr_type,
         } = args;
         let sym = Symbol::new(input.ident.to_string());
 
@@ -74,6 +78,7 @@ impl ExpandCtx {
             proxy,
             input,
             sym,
+            repr_type,
             copy: false,
             supertraits: Vec::new(),
         })
@@ -131,8 +136,7 @@ impl ExpandCtx {
 
     /// `extern_trait::Repr` as a syn `Type`.
     fn repr_type(&self) -> Type {
-        let extern_trait = &self.extern_trait;
-        parse_quote!(#extern_trait::Repr)
+        self.repr_type.to_syn_type()
     }
 
     /// Build a `ReturnType`, replacing by-value `Self` with `Repr`.
@@ -267,9 +271,10 @@ impl ExpandCtx {
 
     /// Generate a single method body that calls through the VTable.
     fn emit_method_body(&self, method: &MethodInfo) -> TokenStream {
-        let extern_trait = &self.extern_trait;
+        let _ = &self.extern_trait;
         let proxy_ident = &self.proxy.ident;
         let proxy_type: Type = parse_quote!(#proxy_ident);
+        let repr_type = self.repr_type();
 
         let VerifiedSignature {
             unsafety,
@@ -290,7 +295,7 @@ impl ExpandCtx {
             .zip(&arg_names)
             .map(|(input, name)| {
                 if input.is_self_value() {
-                    quote!(unsafe { #extern_trait::Repr::from_value(#name) })
+                    quote!(unsafe { #repr_type::from_value(#name) })
                 } else {
                     quote!(#name)
                 }
@@ -340,6 +345,7 @@ impl ExpandCtx {
         let extern_trait = &self.extern_trait;
         let proxy_ident = &self.proxy.ident;
         let trait_ident = &self.input.ident;
+        let repr_type = &self.repr_type;
 
         let panic_doc = format!(
             "# Panics\nPanics if the type parameter `T` is not an implementation type for \
@@ -363,7 +369,7 @@ impl ExpandCtx {
                 #[doc = #panic_doc]
                 pub fn from_impl<T: #trait_ident>(value: T) -> Self {
                     Self::assert_type_is_impl::<T>();
-                    Self(unsafe { #extern_trait::Repr::from_value(value) })
+                    Self(unsafe { #repr_type::from_value(value) })
                 }
 
                 /// Convert the proxy type into the implementation type.
@@ -371,8 +377,8 @@ impl ExpandCtx {
                 pub fn into_impl<T: #trait_ident>(self) -> T {
                     Self::assert_type_is_impl::<T>();
                     unsafe {
-                        #extern_trait::Repr::into_value(
-                            #extern_trait::Repr::from_value(self)
+                        #repr_type::into_value(
+                            #repr_type::from_value(self)
                         )
                     }
                 }
@@ -410,13 +416,34 @@ impl ExpandCtx {
         let vtable_struct = self.emit_vtable_struct(methods, &placeholder);
         let vtable_init = self.emit_vtable_init(methods, &placeholder);
 
+        // size assertion, quoted to point to `ptr_count` expression
+        let size_assertion: TokenStream = {
+            let expected_ptr_count = &self.repr_type.ptr_count();
+            let assert_msg1 = format!(
+                "#[extern_trait] {trait_ident} declared with ptr_count={expected_ptr_count}, but \
+                 impl for ",
+            );
+            quote_spanned! {expected_ptr_count.span() =>
+                assert!(
+                    $actual_ptr_count == #expected_ptr_count,
+                    concat!(
+                        #assert_msg1,
+                        stringify!($ty),
+                        " has ptr_count=",
+                        stringify!($actual_ptr_count)
+                    )
+                );
+            }
+        };
         quote! {
             #[doc(hidden)]
             #[macro_export]
             macro_rules! #macro_ident {
-                ($trait:path: $ty:ty) => {
+                ($trait:path: $ty:ty, ptr_count = $actual_ptr_count:expr) => {
                     const _: () = {
                         #vtable_struct
+
+                        #size_assertion
 
                         #[unsafe(export_name = #vtable_symbol)]
                         static VT: #vtable_ident = #vtable_init;
@@ -455,7 +482,8 @@ impl ExpandCtx {
 
     /// Generate a single VTable field initializer closure for the impl side.
     fn emit_vtable_field_init(&self, method: &MethodInfo, self_type: &Type) -> TokenStream {
-        let extern_trait = &self.extern_trait;
+        let _ = self.extern_trait;
+        let repr_type = self.repr_type();
 
         let MethodInfo {
             sig,
@@ -491,7 +519,7 @@ impl ExpandCtx {
             .zip(&arg_names)
             .map(|(input, name)| {
                 if input.is_self_value() {
-                    quote!(unsafe { #extern_trait::Repr::into_value::<$ty>(#name) })
+                    quote!(unsafe { #repr_type::into_value::<$ty>(#name) })
                 } else {
                     quote!(#name)
                 }
@@ -511,7 +539,7 @@ impl ExpandCtx {
         let body = if output.as_ref().is_some_and(|o| o.is_self_value()) {
             quote! {
                 let __result = #body;
-                unsafe { #extern_trait::Repr::from_value(__result) }
+                unsafe { #repr_type::from_value(__result) }
             }
         } else {
             body
@@ -532,7 +560,7 @@ impl ExpandCtx {
         let methods = self.collect_methods()?;
 
         let input = &self.input;
-        let proxy = self.proxy.expand(&self.extern_trait);
+        let proxy = self.proxy.expand(&self.repr_type);
 
         // Proxy-side vtable struct
         let proxy_ident = &self.proxy.ident;

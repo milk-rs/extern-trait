@@ -1,8 +1,9 @@
 mod args;
 mod decl;
 mod imp;
+mod utils;
 
-use args::{DeclArgs, ImplArgs};
+use args::{DeclArgs, ImplArgs, ReprType};
 use proc_macro::TokenStream;
 use syn::{Error, parse_macro_input};
 
@@ -12,6 +13,7 @@ pub fn extern_trait(args: TokenStream, input: TokenStream) -> TokenStream {
         imp::expand(
             ImplArgs {
                 extern_trait: syn::parse_quote!(::extern_trait),
+                repr_type: ReprType::default(),
             },
             parse_macro_input!(input),
         )

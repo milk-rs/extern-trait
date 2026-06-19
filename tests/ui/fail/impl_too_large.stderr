@@ -1,4 +1,4 @@
-error[E0080]: evaluation panicked: TooLarge is too large to be used with #[extern_trait]
+error[E0080]: evaluation panicked: TooLarge is too large to be used with #[extern_trait] where ptr_count=extern_trait::DEFAULT_PTR_COUNT
   --> tests/ui/fail/impl_too_large.rs:11:14
    |
 11 | impl Api for TooLarge {
