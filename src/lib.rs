@@ -7,11 +7,14 @@ pub use extern_trait_impl::*;
 ///
 /// This type is two pointers in size, which means implementation types must be
 /// at most `2 * size_of::<usize>()` bytes (16 bytes on 64-bit, 8 bytes on 32-bit).
+/// On 32-bit targets it is 8-byte aligned so common 64-bit primitives can
+/// still be stored inline without making the proxy larger.
 ///
-/// The size constraint is checked at compile time.
+/// The size and alignment constraints are checked at compile time.
 #[doc(hidden)]
 #[derive(Clone, Copy)]
 #[repr(C)]
+#[cfg_attr(target_pointer_width = "32", repr(align(8)))]
 pub struct Repr(
     *mut (),
     *mut (),
@@ -30,8 +33,9 @@ impl Repr {
     #[inline]
     pub unsafe fn from_value<T: Sized>(value: T) -> Self {
         const { assert!(size_of::<T>() <= size_of::<Repr>()) };
+        const { assert!(align_of::<T>() <= align_of::<Repr>()) };
         let mut repr = core::mem::MaybeUninit::<Repr>::zeroed();
-        // SAFETY: We just asserted that size_of::<T>() <= size_of::<Repr>()
+        // SAFETY: We just asserted that T fits in Repr and does not require stricter alignment.
         unsafe {
             core::ptr::write(repr.as_mut_ptr().cast::<T>(), value);
             repr.assume_init()
@@ -42,7 +46,8 @@ impl Repr {
     #[inline]
     pub unsafe fn into_value<T: Sized>(self) -> T {
         const { assert!(size_of::<T>() <= size_of::<Repr>()) };
-        // SAFETY: We require that size_of::<T>() <= size_of::<Repr>(),
+        const { assert!(align_of::<T>() <= align_of::<Repr>()) };
+        // SAFETY: We require that T fits in Repr and does not require stricter alignment,
         // and the caller ensures the Repr was created from a valid T.
         unsafe { core::ptr::read((&self as *const Repr).cast::<T>()) }
     }
