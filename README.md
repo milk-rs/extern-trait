@@ -34,7 +34,7 @@ The proxy uses a fixed-size representation:
 ```rust
 #[repr(C)]
 #[cfg_attr(target_pointer_width = "32", repr(align(8)))]
-struct Repr(*const (), *const ());
+struct Repr(*mut (), *mut ());
 ```
 
 This is two pointers in size (16 bytes on 64-bit, 8 bytes on 32-bit) and 8-byte aligned on 32-bit targets, storing the implementation value directly - no heap allocation or pointer indirection is added by the macro.
