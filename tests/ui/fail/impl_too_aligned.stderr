@@ -1,5 +1,5 @@
 error[E0080]: evaluation panicked: TooAligned requires stricter alignment than #[extern_trait] can provide
-  --> tests/ui/fail/impl_too_aligned.rs:12:14
+  --> tests/ui/fail/impl_too_aligned.rs:13:14
    |
-12 | impl Api for TooAligned {
+13 | impl Api for TooAligned {
    |              ^^^^^^^^^^ evaluation of `_` failed here
