@@ -33,10 +33,11 @@ The proxy uses a fixed-size representation:
 
 ```rust
 #[repr(C)]
+#[cfg_attr(target_pointer_width = "32", repr(align(8)))]
 struct Repr(*const (), *const ());
 ```
 
-This is two pointers in size (16 bytes on 64-bit, 8 bytes on 32-bit), storing the implementation value directly - no heap allocation or pointer indirection is added by the macro.
+This is two pointers in size (16 bytes on 64-bit, 8 bytes on 32-bit) and 8-byte aligned on 32-bit targets, storing the implementation value directly - no heap allocation or pointer indirection is added by the macro.
 
 ## Example
 
@@ -192,22 +193,22 @@ In debug builds (`opt-level = 0`), there is additional overhead from `Repr::from
 - Methods must be FFI-compatible: no `const`, `async`, generic parameters, or non-Rust ABI
 - `Self` in signatures must be one of: `Self`, `&Self`, `&mut Self`, `*const Self`, `*mut Self`
 
-## Size Constraint
+## Size and Alignment Constraints
 
-The implementation type must fit within `Repr`, which is two pointers in size:
+The implementation type must fit within `Repr` and must not require stricter alignment:
 
-| Platform | `Repr` size | Max impl size |
-| -------- | ----------- | ------------- |
-| 64-bit   | 16 bytes    | 16 bytes      |
-| 32-bit   | 8 bytes     | 8 bytes       |
+| Platform | `Repr` size | `Repr` alignment | Max impl size | Max impl alignment |
+| -------- | ----------- | ---------------- | ------------- | ------------------ |
+| 64-bit   | 16 bytes    | 8 bytes          | 16 bytes      | 8 bytes            |
+| 32-bit   | 8 bytes     | 8 bytes          | 8 bytes       | 8 bytes            |
 
-This constraint is checked at compile time. Types that fit include:
+These constraints are checked at compile time. Types that fit include:
 
 - Pointer-sized types: `Box<T>`, `Arc<T>`, `&T`, `*const T`
 - Small structs: up to two `usize` fields
-- Primitives: integers, floats, bools
+- Primitives up to 64 bits: integers, floats, bools
 
-For larger types, wrap them in `Box`.
+For larger or over-aligned types, wrap them in `Box`.
 
 ## Supertraits
 
