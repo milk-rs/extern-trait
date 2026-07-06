@@ -47,6 +47,7 @@ struct ExpandCtx {
     // input
     extern_trait: Path,
     proxy: Proxy,
+    default: Option<Type>,
     input: ItemTrait,
     // parsed
     sym: Symbol,
@@ -66,12 +67,14 @@ impl ExpandCtx {
         let TraitArgs {
             extern_trait,
             proxy,
+            default,
         } = args;
         let sym = Symbol::new(input.ident.to_string());
 
         Ok(Self {
             extern_trait,
             proxy,
+            default,
             input,
             sym,
             copy: false,
@@ -408,7 +411,7 @@ impl ExpandCtx {
 
         let placeholder: Type = Type::Verbatim(quote!($ty));
         let vtable_struct = self.emit_vtable_struct(methods, &placeholder);
-        let vtable_init = self.emit_vtable_init(methods, &placeholder);
+        let vtable_init = self.emit_vtable_init(methods, &placeholder, quote!($trait));
 
         quote! {
             #[doc(hidden)]
@@ -431,7 +434,12 @@ impl ExpandCtx {
     }
 
     /// Generate the VTable static initializer expression.
-    fn emit_vtable_init(&self, methods: &[MethodInfo], self_type: &Type) -> TokenStream {
+    fn emit_vtable_init(
+        &self,
+        methods: &[MethodInfo],
+        self_type: &Type,
+        trait_path: TokenStream,
+    ) -> TokenStream {
         let extern_trait = &self.extern_trait;
         let vtable_ident = self.vtable_ident();
 
@@ -439,22 +447,27 @@ impl ExpandCtx {
             .iter()
             .map(|m| {
                 let field_name = m.field_name();
-                let init = self.emit_vtable_field_init(m, self_type);
+                let init = self.emit_vtable_field_init(m, self_type, &trait_path);
                 quote! { #field_name: #init }
             })
             .collect();
 
         quote! {
             #vtable_ident {
-                typeid: #extern_trait::__private::ConstTypeId::of::<$ty>(),
-                drop: |this: *mut $ty| unsafe { ::core::ptr::drop_in_place(this) },
+                typeid: #extern_trait::__private::ConstTypeId::of::<#self_type>(),
+                drop: |this: *mut #self_type| unsafe { ::core::ptr::drop_in_place(this) },
                 #(#method_inits),*
             }
         }
     }
 
     /// Generate a single VTable field initializer closure for the impl side.
-    fn emit_vtable_field_init(&self, method: &MethodInfo, self_type: &Type) -> TokenStream {
+    fn emit_vtable_field_init(
+        &self,
+        method: &MethodInfo,
+        self_type: &Type,
+        trait_path: &TokenStream,
+    ) -> TokenStream {
         let extern_trait = &self.extern_trait;
 
         let MethodInfo {
@@ -491,7 +504,7 @@ impl ExpandCtx {
             .zip(&arg_names)
             .map(|(input, name)| {
                 if input.is_self_value() {
-                    quote!(unsafe { #extern_trait::Repr::into_value::<$ty>(#name) })
+                    quote!(unsafe { #extern_trait::Repr::into_value::<#self_type>(#name) })
                 } else {
                     quote!(#name)
                 }
@@ -500,12 +513,12 @@ impl ExpandCtx {
 
         // Trait path for qualified call
         let trait_name = match &supertrait_path {
-            None => quote!($trait),
+            None => trait_path.clone(),
             Some(path) => quote!(#path),
         };
 
         let body = quote! {
-            #unsafety { <$ty as #trait_name>::#ident(#(#call_args),*) }
+            #unsafety { <#self_type as #trait_name>::#ident(#(#call_args),*) }
         };
 
         let body = if output.as_ref().is_some_and(|o| o.is_self_value()) {
@@ -522,6 +535,41 @@ impl ExpandCtx {
                 #body
             }
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // Default impl VTable with weak linkage
+    // -----------------------------------------------------------------------
+
+    fn emit_default_vtable(&self, methods: &[MethodInfo]) -> Option<TokenStream> {
+        let extern_trait = &self.extern_trait;
+
+        let default_type = self.default.as_ref()?;
+        let trait_ident = &self.input.ident;
+        let vtable_ident = self.vtable_ident();
+        let vtable_symbol = self.vtable_symbol();
+
+        let vtable_struct = self.emit_vtable_struct(methods, default_type);
+        let vtable_init = self.emit_vtable_init(methods, default_type, quote!(#trait_ident));
+
+        Some(quote! {
+            const _: () = {
+                assert!(
+                    ::core::mem::size_of::<#default_type>() <= ::core::mem::size_of::<#extern_trait::Repr>(),
+                    concat!(stringify!(#default_type), " is too large to be used with #[extern_trait]")
+                );
+                assert!(
+                    ::core::mem::align_of::<#default_type>() <= ::core::mem::align_of::<#extern_trait::Repr>(),
+                    concat!(stringify!(#default_type), " requires stricter alignment than #[extern_trait] can provide")
+                );
+
+                #vtable_struct
+
+                #[unsafe(export_name = #vtable_symbol)]
+                #[linkage = "weak"]
+                static DEFAULT_VT: #vtable_ident = #vtable_init;
+            };
+        })
     }
 
     // -----------------------------------------------------------------------
@@ -554,6 +602,9 @@ impl ExpandCtx {
         // Cast methods
         let cast_impl = self.emit_cast_impl();
 
+        // Default impl VTable
+        let default_vtable = self.emit_default_vtable(&methods);
+
         // macro_rules
         let macro_rules = self.emit_macro_rules(&methods);
 
@@ -574,6 +625,8 @@ impl ExpandCtx {
                 #drop_impl
 
                 #cast_impl
+
+                #default_vtable
             };
 
             #macro_rules

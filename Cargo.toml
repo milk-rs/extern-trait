@@ -26,5 +26,8 @@ repository.workspace = true
 extern-trait-impl = { version = "=0.4.2", path = "impl" }
 typeid = "1"
 
+[features]
+nightly-weak = ["extern-trait-impl/nightly-weak"]
+
 [dev-dependencies]
 trybuild = "1"
