@@ -12,7 +12,7 @@ use self::{
     types::VerifiedSignature,
 };
 use crate::{
-    args::{DeclArgs, Proxy},
+    args::{Proxy, TraitArgs},
     decl::types::{MaybeSelf, arg_names, make_return_type},
 };
 
@@ -55,7 +55,7 @@ struct ExpandCtx {
 }
 
 impl ExpandCtx {
-    fn new(args: DeclArgs, input: ItemTrait) -> Result<Self> {
+    fn new(args: TraitArgs, input: ItemTrait) -> Result<Self> {
         if !input.generics.params.is_empty() {
             return Err(Error::new_spanned(
                 input.generics,
@@ -63,7 +63,7 @@ impl ExpandCtx {
             ));
         }
 
-        let DeclArgs {
+        let TraitArgs {
             extern_trait,
             proxy,
         } = args;
@@ -581,6 +581,6 @@ impl ExpandCtx {
     }
 }
 
-pub fn expand(args: DeclArgs, input: ItemTrait) -> Result<TokenStream> {
+pub fn expand(args: TraitArgs, input: ItemTrait) -> Result<TokenStream> {
     ExpandCtx::new(args, input)?.expand()
 }

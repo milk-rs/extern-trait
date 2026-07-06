@@ -1,0 +1,5 @@
+error: proxy type is only supported on trait declarations
+  --> tests/ui/fail/impl_proxy_arg.rs:10:16
+   |
+10 | #[extern_trait(Proxy)]
+   |                ^^^^^

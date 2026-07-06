@@ -2,31 +2,26 @@ mod args;
 mod decl;
 mod imp;
 
-use args::{DeclArgs, ImplArgs};
+use args::{Args, ImplArgs, TraitArgs};
 use proc_macro::TokenStream;
-use syn::{Error, parse_macro_input};
+use syn::{Error, Item, Result};
 
 #[proc_macro_attribute]
 pub fn extern_trait(args: TokenStream, input: TokenStream) -> TokenStream {
-    if args.is_empty() {
-        imp::expand(
-            ImplArgs {
-                extern_trait: syn::parse_quote!(::extern_trait),
-            },
-            parse_macro_input!(input),
-        )
-    } else {
-        // Try to parse as DeclArgs first (for trait declarations)
-        // If that fails with a trait-specific error, try ImplArgs (for impl blocks with crate = ...)
-        let args_clone = args.clone();
-        match syn::parse::<DeclArgs>(args) {
-            Ok(decl_args) => decl::expand(decl_args, parse_macro_input!(input)),
-            Err(_) => {
-                // Try parsing as ImplArgs instead
-                imp::expand(parse_macro_input!(args_clone), parse_macro_input!(input))
-            }
-        }
+    expand(args, input)
+        .unwrap_or_else(Error::into_compile_error)
+        .into()
+}
+
+fn expand(args: TokenStream, input: TokenStream) -> Result<proc_macro2::TokenStream> {
+    let args = syn::parse::<Args>(args)?;
+
+    match syn::parse::<Item>(input)? {
+        Item::Trait(input) => decl::expand(TraitArgs::try_from(args)?, input),
+        Item::Impl(input) => imp::expand(ImplArgs::try_from(args)?, input),
+        input => Err(Error::new_spanned(
+            input,
+            "#[extern_trait] can only be used on a trait or trait impl",
+        )),
     }
-    .unwrap_or_else(Error::into_compile_error)
-    .into()
 }

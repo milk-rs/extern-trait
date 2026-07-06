@@ -1,0 +1,5 @@
+error: #[extern_trait] can only be used on a trait or trait impl
+ --> tests/ui/fail/non_trait_or_impl.rs:4:1
+  |
+4 | struct NotATraitOrImpl;
+  | ^^^^^^^^^^^^^^^^^^^^^^^
