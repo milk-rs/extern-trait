@@ -12,7 +12,6 @@ args = [
 ]
 status = "failed"
 stderr = """
-...
 error[E0554]: `#![feature]` may not be used on the stable release channel
 ...
 """

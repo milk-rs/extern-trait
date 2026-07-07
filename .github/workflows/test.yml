@@ -92,6 +92,10 @@ jobs:
       - name: Test
         run: ${CARGO_CMD} test --target ${{ matrix.target }} --verbose
 
+      - name: Test cargo command matrix
+        if: ${{ matrix.target == 'x86_64-unknown-linux-gnu' }}
+        run: cargo test --test cargo_matrix -- --ignored
+
   test-nightly:
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -103,3 +107,6 @@ jobs:
 
       - name: Test nightly feature
         run: cargo hack test --feature-powerset --verbose
+
+      - name: Test cargo command matrix
+        run: cargo test --test cargo_matrix -- --ignored

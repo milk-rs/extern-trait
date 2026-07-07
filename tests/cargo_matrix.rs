@@ -1,6 +1,7 @@
 use std::{env, path::PathBuf, time::Duration};
 
 #[test]
+#[ignore = "host-only cargo invocation test"]
 fn cargo_matrix() {
     let cases = trycmd::TestCases::new();
     cases

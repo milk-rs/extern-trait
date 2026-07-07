@@ -10,7 +10,6 @@ args = [
 ]
 status = "failed"
 stderr = """
-...
 error: `default = ...` requires the `nightly-weak` feature and `#![feature(linkage)]`
 ...
 """
