@@ -1,0 +1,16 @@
+bin.name = "cargo"
+args = [
+    "check",
+    "--quiet",
+    "--locked",
+    "--manifest-path",
+    "tests/fixtures/default-requires-feature/Cargo.toml",
+    "--target-dir",
+    "target/trycmd/default-requires-feature",
+]
+status = "failed"
+stderr = """
+...
+error: `default = ...` requires the `nightly-weak` feature and `#![feature(linkage)]`
+...
+"""

@@ -1,0 +1,13 @@
+bin.name = "cargo"
+args = [
+    "test",
+    "--quiet",
+    "--locked",
+    "--manifest-path",
+    "tests/fixtures/nightly-weak-override/Cargo.toml",
+    "-p",
+    "app",
+    "--target-dir",
+    "target/trycmd/nightly-weak-override",
+]
+status = "success"

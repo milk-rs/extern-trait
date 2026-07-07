@@ -1,0 +1,9 @@
+[workspace]
+
+[package]
+name = "default-requires-feature"
+version = "0.0.0"
+edition = "2024"
+
+[dependencies]
+extern-trait = { path = "../../.." }

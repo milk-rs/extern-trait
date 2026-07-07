@@ -1,0 +1,18 @@
+bin.name = "cargo"
+args = [
+    "check",
+    "--quiet",
+    "--locked",
+    "--manifest-path",
+    "tests/fixtures/nightly-weak-override/Cargo.toml",
+    "-p",
+    "api",
+    "--target-dir",
+    "target/trycmd/nightly-weak-requires-nightly",
+]
+status = "failed"
+stderr = """
+...
+error[E0554]: `#![feature]` may not be used on the stable release channel
+...
+"""
