@@ -1,0 +1,7 @@
+[package]
+name = "api"
+version = "0.0.0"
+edition = "2024"
+
+[dependencies]
+extern-trait = { workspace = true, features = ["nightly-weak"] }

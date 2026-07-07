@@ -90,4 +90,23 @@ jobs:
           printf 'CARGO_CMD=cross\n' >> $GITHUB_ENV
 
       - name: Test
-        run: ${CARGO_CMD} test --all-features --target ${{ matrix.target }} --verbose
+        run: ${CARGO_CMD} test --target ${{ matrix.target }} --verbose
+
+      - name: Test cargo command matrix
+        if: ${{ matrix.target == 'x86_64-unknown-linux-gnu' }}
+        run: cargo test --test cargo_matrix
+
+  test-nightly:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: taiki-e/install-action@cargo-hack
+
+      - name: Test nightly feature
+        run: cargo hack test --feature-powerset --verbose
+
+      - name: Test cargo command matrix
+        run: cargo test --test cargo_matrix

@@ -22,9 +22,19 @@ categories.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[features]
+nightly-weak = ["extern-trait-impl/nightly-weak"]
+
 [dependencies]
 extern-trait-impl = { version = "=0.4.2", path = "impl" }
 typeid = "1"
 
 [dev-dependencies]
+rustversion = "1"
 trybuild = "1"
+trycmd = "1.2"
+
+[[test]]
+name = "cargo_matrix"
+path = "tests/cargo_matrix.rs"
+test = false

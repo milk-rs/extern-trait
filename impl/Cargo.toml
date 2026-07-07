@@ -12,6 +12,9 @@ repository.workspace = true
 [lib]
 proc-macro = true
 
+[features]
+nightly-weak = []
+
 [dependencies]
 proc-macro2 = "1.0"
 quote = "1.0"

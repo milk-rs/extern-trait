@@ -1,0 +1,6 @@
+[workspace]
+members = ["api", "app"]
+resolver = "3"
+
+[workspace.dependencies]
+extern-trait = { path = "../../.." }

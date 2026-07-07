@@ -1,0 +1,5 @@
+error: default implementation is only supported on trait declarations
+  --> tests/ui/fail/impl_default_arg.rs:10:26
+   |
+10 | #[extern_trait(default = Impl)]
+   |                          ^^^^

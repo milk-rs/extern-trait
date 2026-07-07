@@ -267,6 +267,47 @@ assert_eq!(a.value(), 42);  // a is still valid
 assert!(!core::mem::needs_drop::<CopyProxy>());  // no Drop
 ```
 
+## Experimental Weak Defaults
+
+Enable the `nightly-weak` feature to attach a weak default implementation to a trait definition. The defining crate must be compiled on nightly and opt into Rust's unstable [`linkage`](https://doc.rust-lang.org/unstable-book/language-features/linkage.html) feature:
+
+```rust,ignore
+#![feature(linkage)]
+
+use extern_trait::extern_trait;
+
+struct DefaultConsole;
+
+#[extern_trait(default = DefaultConsole, ConsoleProxy)]
+trait Console {
+    fn new() -> Self;
+    fn write(&self, bytes: &[u8]);
+}
+
+impl Console for DefaultConsole {
+    fn new() -> Self { Self }
+    fn write(&self, _bytes: &[u8]) {}
+}
+```
+
+If no strong `#[extern_trait] impl` is linked, `ConsoleProxy` dispatches to `DefaultConsole`. A strong implementation from another crate overrides the weak default at link time:
+
+```rust,ignore
+struct UartConsole;
+
+#[extern_trait]
+impl Console for UartConsole {
+    fn new() -> Self { Self }
+    fn write(&self, bytes: &[u8]) {
+        // write to hardware
+    }
+}
+```
+
+The default type follows the same restrictions as a normal implementation type: it must be concrete, fit in `Repr`, satisfy alignment limits, and implement the trait and supported supertraits. Do not define the weak default and a strong implementation in the same crate; Rust reports a duplicate exported symbol before the linker can choose the strong definition.
+
+This feature inherits the portability limits of Rust's unstable `#[linkage = "weak"]` support. Rust currently treats `linkage` as platform- and backend-specific; weak symbols may be rejected or behave differently on some target/linker combinations, especially outside ELF-style targets. `extern-trait` does not define a support matrix. Verify this feature on each target you ship, and gate it in your own crate if a target does not support Rust's current weak-linkage behavior.
+
 ## Re-exporting / Renaming
 
 By default, the macro references `::extern_trait`. If you re-export or rename the crate, use the `crate` attribute to specify the correct path:
@@ -299,6 +340,10 @@ my_extern_trait = { package = "extern-trait", version = "..." }
 ```
 
 ## Internals
+
+### VTable Layout
+
+The proxy imports a VTable symbol whose function pointer types mention the proxy type. Each implementation exports the same `#[repr(C)]` field layout with its concrete implementation type in those pointer signatures. Weak defaults use the same layout contract.
 
 ### Why Two Pointers?
 
