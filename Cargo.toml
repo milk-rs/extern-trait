@@ -2,9 +2,8 @@
 members = ["impl"]
 
 [workspace.package]
-version = "0.4.2"
+version = "0.5.0"
 edition = "2024"
-authors = ["朝倉水希 <asakuramizu111@gmail.com>"]
 description = "Opaque types for traits using static dispatch"
 keywords = ["no_std", "trait", "static-dispatch", "opaque-type"]
 categories = ["no-std", "development-tools::procedural-macro-helpers"]
@@ -15,7 +14,6 @@ repository = "https://github.com/milk-rs/extern-trait"
 name = "extern-trait"
 version.workspace = true
 edition.workspace = true
-authors.workspace = true
 description.workspace = true
 keywords.workspace = true
 categories.workspace = true
@@ -26,7 +24,7 @@ repository.workspace = true
 nightly-weak = ["extern-trait-impl/nightly-weak"]
 
 [dependencies]
-extern-trait-impl = { version = "=0.4.2", path = "impl" }
+extern-trait-impl = { version = "=0.5.0", path = "impl" }
 typeid = "1"
 
 [dev-dependencies]
