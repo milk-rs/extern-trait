@@ -33,3 +33,8 @@ typeid = "1"
 rustversion = "1"
 trybuild = "1"
 trycmd = "1.2"
+
+[[test]]
+name = "cargo_matrix"
+path = "tests/cargo_matrix.rs"
+test = false

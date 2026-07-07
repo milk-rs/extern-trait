@@ -1,10 +1,10 @@
 use std::{env, path::PathBuf, time::Duration};
 
 #[test]
-#[ignore = "host-only cargo invocation test"]
 fn cargo_matrix() {
     let cases = trycmd::TestCases::new();
     cases
+        .env("CARGO_TERM_COLOR", "never")
         .register_bin("cargo", PathBuf::from(env::var("CARGO").unwrap()))
         .timeout(Duration::from_secs(180))
         .case("tests/cmd/default-requires-feature.toml");
